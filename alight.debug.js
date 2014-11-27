@@ -388,7 +388,7 @@
 (function() {
   var Scope, attrBinding, bindComment, directivePreprocessor, get_time, nodeTypeBind, notEqual, process, sortByPriority, testDirective, textBinding;
 
-  alight.version = '0.7.4';
+  alight.version = '0.7.5';
 
   alight.debug = {
     scan: false,
@@ -477,8 +477,9 @@
       code: 'init',
       fn: function() {
         if (this.directive.init) {
-          return this.result = this.directive.init(this.element, this.expression, this.scope, this.env) || {};
-        } else {
+          this.result = this.directive.init(this.element, this.expression, this.scope, this.env) || {};
+        }
+        if (!f$.isObject(this.result)) {
           return this.result = {};
         }
       }
@@ -699,7 +700,6 @@
         value = f$.attr(this.element, name);
         return value || true;
       }
-      return null;
     };
     skippedAttr = function() {
       var attr, _i, _len, _ref, _results;
@@ -938,15 +938,6 @@
       callback(r.value);
     }
     return r;
-  };
-
-  Scope.prototype.$fire = function(name) {
-    var d;
-    d = this.$system.watches[name];
-    if (!d) {
-      return;
-    }
-    return d.fire = true;
   };
 
 
@@ -1535,7 +1526,7 @@
       exp = scope.$compileText(name, {
         result_on_static: true,
         onStatic: function() {
-          var cb, clean, value, _i, _len, _ref, _results;
+          var cb, clean, value, _i, _len, _ref;
           value = exp.call(scope);
           clean = function() {
             d.exp = function() {
@@ -1558,12 +1549,11 @@
             };
           }
           _ref = d.onStatic;
-          _results = [];
           for (_i = 0, _len = _ref.length; _i < _len; _i++) {
             cb = _ref[_i];
-            _results.push(cb(value));
+            cb(value);
           }
-          return _results;
+          return null;
         }
       });
       if (!f$.isFunction(exp)) {
@@ -1603,24 +1593,23 @@
     timer = null;
     list = [];
     exec = function() {
-      var callback, dlist, e, err, it, self, _i, _len, _results;
+      var callback, dlist, e, err, it, self, _i, _len;
       timer = null;
       dlist = list.slice();
       list.length = 0;
-      _results = [];
       for (_i = 0, _len = dlist.length; _i < _len; _i++) {
         it = dlist[_i];
         callback = it[0];
         self = it[1];
         try {
-          _results.push(callback.call(self));
+          callback.call(self);
         } catch (_error) {
           e = _error;
           err = typeof e === 'string' ? e : e.stack;
-          _results.push(console.error(err));
+          console.error(err);
         }
       }
-      return _results;
+      return null;
     };
     return function(callback) {
       list.push([callback, this]);
@@ -1685,7 +1674,7 @@
   };
 
   alight.applyBindings = function(scope, element, config) {
-    var cb, finishBinding, lst, _i, _len, _results;
+    var cb, finishBinding, lst, _i, _len;
     if (!element) {
       throw 'No element';
     }
@@ -1702,24 +1691,22 @@
       scope.$system.root.$system.finishBinding_lock = false;
       lst = scope.$system.root.$system.finishBinding_callbacks.slice();
       scope.$system.root.$system.finishBinding_callbacks.length = 0;
-      _results = [];
       for (_i = 0, _len = lst.length; _i < _len; _i++) {
         cb = lst[_i];
-        _results.push(cb());
+        cb();
       }
-      return _results;
     }
+    return null;
   };
 
   alight.bootstrap = function(elements) {
-    var attr, ctrl, ctrlName, element, scope, t, tag, _i, _len, _results;
+    var attr, ctrl, ctrlName, element, scope, t, tag, _i, _len;
     if (!elements) {
       elements = f$.find(document, '[al-app]');
     }
     if (!(f$.isArray(elements) || elements.length !== void 0)) {
       elements = [elements];
     }
-    _results = [];
     for (_i = 0, _len = elements.length; _i < _len; _i++) {
       element = elements[_i];
       if (element.ma_bootstrapped) {
@@ -1752,11 +1739,11 @@
       } else {
         scope = alight.Scope();
       }
-      _results.push(alight.applyBindings(scope, element, {
+      alight.applyBindings(scope, element, {
         skip_attr: 'al-app'
-      }));
+      });
     }
-    return _results;
+    return null;
   };
 
 }).call(this);
@@ -2352,52 +2339,55 @@
     }
   };
 
-  dirs.checked = function(element, name, scope) {
-    var init_value, self;
-    init_value = false;
-    return self = {
-      changing: false,
-      start: function() {
-        self.makeSetter();
-        self.onDom();
-        self.watchModel();
-        return self.initDom();
-      },
-      makeSetter: function() {
-        return self.setter = scope.$compile(name + ' = $_value', {
-          no_return: true,
-          input: ['$_value']
-        });
-      },
-      onDom: function() {
-        return f$.on(element, 'change', self.updateModel);
-      },
-      updateModel: function() {
-        var value;
-        value = f$.prop(element, 'checked');
-        self.changing = true;
-        self.setter(value);
-        return scope.$scan(function() {
-          return self.changing = false;
-        });
-      },
-      watchModel: function() {
-        var w;
-        w = scope.$watch(name, self.updateDom, {
-          readOnly: true
-        });
-        return init_value = !!w.value;
-      },
-      updateDom: function(value) {
-        if (self.changing) {
-          return;
+  dirs.checked = {
+    priority: 100,
+    init: function(element, name, scope) {
+      var init_value, self;
+      init_value = false;
+      return self = {
+        changing: false,
+        start: function() {
+          self.makeSetter();
+          self.onDom();
+          self.watchModel();
+          return self.initDom();
+        },
+        makeSetter: function() {
+          return self.setter = scope.$compile(name + ' = $_value', {
+            no_return: true,
+            input: ['$_value']
+          });
+        },
+        onDom: function() {
+          return f$.on(element, 'change', self.updateModel);
+        },
+        updateModel: function() {
+          var value;
+          value = f$.prop(element, 'checked');
+          self.changing = true;
+          self.setter(value);
+          return scope.$scan(function() {
+            return self.changing = false;
+          });
+        },
+        watchModel: function() {
+          var w;
+          w = scope.$watch(name, self.updateDom, {
+            readOnly: true
+          });
+          return init_value = !!w.value;
+        },
+        updateDom: function(value) {
+          if (self.changing) {
+            return;
+          }
+          return f$.prop(element, 'checked', !!value);
+        },
+        initDom: function() {
+          return self.updateDom(init_value);
         }
-        return f$.prop(element, 'checked', !!value);
-      },
-      initDom: function() {
-        return self.updateDom(init_value);
-      }
-    };
+      };
+    }
   };
 
   dirs.radio = {
@@ -2489,9 +2479,8 @@
           return null;
         },
         prepare: function() {
-          var color, css, d, item, result, value, _i, _len, _ref, _results;
+          var color, css, d, item, result, value, _i, _len, _ref;
           _ref = self.list;
-          _results = [];
           for (_i = 0, _len = _ref.length; _i < _len; _i++) {
             item = _ref[_i];
             d = item.split(':');
@@ -2505,9 +2494,9 @@
             result = scope.$watch(value, color, {
               readOnly: true
             });
-            _results.push(color(result.value));
+            color(result.value);
           }
-          return _results;
+          return null;
         },
         draw: function(css, value) {
           if (value) {
@@ -3086,17 +3075,16 @@
           return child_scope.$last = index === list.length - 1;
         },
         rawUpdateDom: function(removes, inserts) {
-          var e, it, _i, _j, _len, _len1, _results;
+          var e, it, _i, _j, _len, _len1;
           for (_i = 0, _len = removes.length; _i < _len; _i++) {
             e = removes[_i];
             f$.remove(e);
           }
-          _results = [];
           for (_j = 0, _len1 = inserts.length; _j < _len1; _j++) {
             it = inserts[_j];
-            _results.push(f$.after(it.after, it.element));
+            f$.after(it.after, it.element);
           }
-          return _results;
+          return null;
         },
         updateDom: (function() {
           var $id, getNodeByItem, index, node_by_id, nodes;
@@ -3106,7 +3094,7 @@
           index = 0;
           $id = null;
           return function(list) {
-            var applyList, child_scope, dom_inserts, dom_removes, it, item, item_value, last_element, next2, node, nodes2, pid, prev_node, _getId, _i, _id, _j, _k, _l, _len, _len1, _len2, _len3, _results;
+            var applyList, child_scope, dom_inserts, dom_removes, it, item, item_value, last_element, next2, node, nodes2, pid, prev_node, _getId, _i, _id, _j, _k, _l, _len, _len1, _len2, _len3;
             if (!getNodeByItem) {
               if (self.trackExpression === '$index') {
                 getNodeByItem = function(item) {
@@ -3268,14 +3256,13 @@
             }
             nodes = nodes2;
             self.rawUpdateDom(dom_removes, dom_inserts);
-            _results = [];
             for (_l = 0, _len3 = applyList.length; _l < _len3; _l++) {
               it = applyList[_l];
-              _results.push(alight.applyBindings(it[0], it[1], {
+              alight.applyBindings(it[0], it[1], {
                 skip_attr: env.skippedAttr()
-              }));
+              });
             }
-            return _results;
+            return null;
           };
         })()
       };
