@@ -1,6 +1,6 @@
 {
   "name": "alight",
-  "version": "0.7.13",
+  "version": "0.7.15",
   "authors": [
     "Oleg Nechaev <lega911@gmail.com>"
   ],
@@ -9,8 +9,11 @@
     "alight.js"
   ],
   "ignore": [
+    "README.md"
   ],
   "moduleType": [
+    "amd",
+    "node",
     "globals"
   ],
   "keywords": [
