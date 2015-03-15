@@ -425,7 +425,7 @@
 (function() {
   var Scope, attrBinding, bindComment, directivePreprocessor, get_time, nodeTypeBind, notEqual, process, scan_core, scan_core2, sortByPriority, testDirective, textBinding;
 
-  alight.version = '0.8.8';
+  alight.version = '0.8.9';
 
   alight.debug = {
     useObserver: false,
@@ -1276,30 +1276,17 @@
   };
 
   Scope.prototype.$getValue = function(name) {
-    var dict, key, len, n, ref;
-    dict = this;
-    ref = name.split('.');
-    for (n = 0, len = ref.length; n < len; n++) {
-      key = ref[n];
-      dict = (dict || {})[key];
-    }
-    return dict;
+    return this.$eval(name);
   };
 
   Scope.prototype.$setValue = function(name, value) {
-    var child, d, dict, i, key, n, ref;
-    dict = this;
-    d = name.split('.');
-    for (i = n = 0, ref = d.length - 2; n <= ref; i = n += 1) {
-      key = d[i];
-      child = dict[key];
-      if (child === void 0) {
-        dict[key] = child = {};
-      }
-      dict = child;
-    }
-    key = d[d.length - 1];
-    return dict[key] = value;
+    var fn;
+    fn = this.$compile(name + ' = $value', {
+      input: ['$value'],
+      no_return: true,
+      noBind: true
+    });
+    return fn(this, value);
   };
 
   Scope.prototype.$destroy = function() {

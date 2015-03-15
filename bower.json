@@ -1,25 +1,25 @@
 {
-  "name": "alight",
-  "version": "0.8.8",
-  "authors": [
-    "Oleg Nechaev <lega911@gmail.com>"
-  ],
-  "description": "Web framework with MVC model",
-  "main": [
-    "alight.js"
-  ],
-  "ignore": [
-    "README.md"
-  ],
-  "moduleType": [
-    "amd",
-    "node",
-    "globals"
-  ],
-  "keywords": [
-    "alight",
-    "javascript"
-  ],
-  "license": "MIT",
-  "homepage": "http://angularlight.org/"
+    "name": "alight",
+    "version": "0.8.9",
+    "authors": [
+        "Oleg Nechaev <lega911@gmail.com>"
+    ],
+    "description": "Web framework with MVC model",
+    "main": [
+        "alight.js"
+    ],
+    "ignore": [
+        "README.md"
+    ],
+    "moduleType": [
+        "amd",
+        "node",
+        "globals"
+    ],
+    "keywords": [
+        "alight",
+        "javascript"
+    ],
+    "license": "MIT",
+    "homepage": "http://angularlight.org/"
 }
