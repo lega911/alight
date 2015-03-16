@@ -425,7 +425,7 @@
 (function() {
   var Scope, attrBinding, bindComment, directivePreprocessor, get_time, nodeTypeBind, notEqual, process, scan_core, scan_core2, sortByPriority, testDirective, textBinding;
 
-  alight.version = '0.8.9';
+  alight.version = '0.8.10';
 
   alight.debug = {
     useObserver: false,
@@ -2354,7 +2354,7 @@
         index += 1;
         an = line[index];
         if (convert) {
-          if (a.match(/[\d\w_\.\$]/)) {
+          if (a.match(/[\d\w\u0410-\u044F\u0401\u0451_\.\$]/)) {
             if (!variable) {
               variable_index = index - 1;
             }
