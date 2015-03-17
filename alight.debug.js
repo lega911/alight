@@ -425,7 +425,7 @@
 (function() {
   var Scope, attrBinding, bindComment, directivePreprocessor, get_time, nodeTypeBind, notEqual, process, scan_core, scan_core2, sortByPriority, testDirective, textBinding;
 
-  alight.version = '0.8.10';
+  alight.version = '0.8.11';
 
   alight.debug = {
     useObserver: false,
@@ -453,16 +453,34 @@
 
   alight.apps = {};
 
-  alight.directivePreprocessor = directivePreprocessor = function(ns, name, args) {
-    var dir, k, raw, v;
-    name = name.replace(/(-\w)/g, function(m) {
+  alight.directivePreprocessor = directivePreprocessor = function(attrName, args) {
+    var dir, j, k, name, ns, path, raw, v;
+    if (attrName.slice(0, 5) === 'data-') {
+      name = attrName.slice(5);
+    } else {
+      name = attrName;
+    }
+    j = name.indexOf('-');
+    if (j < 0) {
+      return {
+        noNs: true
+      };
+    }
+    ns = name.substring(0, j);
+    name = name.substring(j + 1).replace(/(-\w)/g, function(m) {
       return m.substring(1).toUpperCase();
     });
-    if (args.scope.$ns) {
-      raw = args.scope.$ns.directives[ns][name];
+    if (args.scope.$ns && args.scope.$ns.directives) {
+      path = args.scope.$ns.directives[ns];
     } else {
-      raw = alight.directives[ns][name];
+      path = alight.directives[ns];
     }
+    if (!path) {
+      return {
+        noNs: true
+      };
+    }
+    raw = path[name];
     if (!raw) {
       return {
         noDirective: true
@@ -627,35 +645,23 @@
       }
     };
     return function(attrName, args) {
-      var directive, j, name, ns, path, scope;
+      var directive;
       if (args.skip_attr.indexOf(attrName) >= 0) {
         return addAttr(attrName, args, {
           skip: true
         });
       }
-      j = attrName.indexOf('-');
-      if (j < 0) {
+      directive = alight.directivePreprocessor(attrName, args);
+      if (directive.noNs) {
         return addAttr(attrName, args);
       }
-      ns = attrName.substring(0, j);
-      name = attrName.substring(j + 1);
-      scope = args.scope;
-      if (scope.$ns) {
-        path = (scope.$ns.directives || {})[ns];
-      } else {
-        path = alight.directives[ns];
-      }
-      if (!path) {
-        return addAttr(attrName, args);
-      }
-      directive = alight.directivePreprocessor(ns, name, args);
       if (directive.noDirective) {
         return addAttr(attrName, args, {
           noDirective: true
         });
       }
       return args.list.push({
-        name: name,
+        name: attrName,
         directive: directive,
         priority: directive.priority,
         attrName: attrName
@@ -1978,8 +1984,8 @@
 
   alight.getController = function(name, scope) {
     var ctrl;
-    if (scope.$ns) {
-      ctrl = (scope.$ns.controllers || {})[name];
+    if (scope.$ns && scope.$ns.controllers) {
+      ctrl = scope.$ns.controllers[name];
     } else {
       ctrl = alight.controllers[name] || (enableGlobalControllers && window[name]);
     }
@@ -1994,8 +2000,8 @@
 
   alight.getFilter = function(name, scope, param) {
     var filter;
-    if (scope.$ns) {
-      filter = (scope.$ns.filters || {})[name];
+    if (scope.$ns && scope.$ns.filters) {
+      filter = scope.$ns.filters[name];
     } else {
       filter = alight.filters[name];
     }
