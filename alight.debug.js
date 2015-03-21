@@ -331,14 +331,18 @@
         var rawAjax = function(args) {
             $.ajax({
                 url: args.url,
-                type: args.type || 'GET'
+                type: args.type || 'GET',
+                username: args.username,
+                password: args.password,
+                headers: args.headers,
+                data: args.data
             }).then(args.success || empty, args.error || empty)
         }
     } else {
         var rawAjax = function(args) {
             var request = new XMLHttpRequest();
-            request.open(args.type || 'GET', args.url, true);
-            request.send();
+            request.open(args.type || 'GET', args.url, true, args.username, args.password);
+            for(var i in args.headers) request.setRequestHeader(i, args.headers[i]);
 
             if(args.success) {
                 request.onload = function() {
@@ -350,12 +354,26 @@
                 }
             }
             if(args.error) request.onerror = args.error;
+
+            request.send(args.data || null);
         };
     };
 
     f$.ajaxCache = {};
+    /*
+        ajax
+            cache
+            type
+            url
+            success
+            error
+            username
+            password
+            data
+            headers
+    */
     f$.ajax = function(args) {
-        if(!args.cache) return rawAjax(args);
+        if(args.username || args.password || args.headers || args.data || !args.cache) return rawAjax(args);
 
         // cache
         var queryType = args.type || 'GET';
@@ -373,18 +391,20 @@
             type: queryType,
             url: args.url,
             success: function(result) {
+                d.loading = false
                 d.result = result;
                 for(var i=0;i<d.callback.length;i++)
                     if(d.callback[i].success) d.callback[i].success(result)
                 d.callback.length = 0;
             },
             error: function() {
+                d.loading = false
                 for(var i=0;i<d.callback.length;i++)
                     if(d.callback[i].error) d.callback[i].error()
                 d.callback.length = 0;
             }
         })
-    };    
+    };
 
     if(msie && msie < 8) {
         f$.focus = function(element) {
@@ -423,9 +443,9 @@
 })();
 
 (function() {
-  var Scope, attrBinding, bindComment, directivePreprocessor, get_time, nodeTypeBind, notEqual, process, scan_core, scan_core2, sortByPriority, testDirective, textBinding;
+  var Scope, attrBinding, bindComment, directivePreprocessor, get_time, injectToRootLine, nodeTypeBind, notEqual, process, scan_core, scan_core2, sortByPriority, testDirective, textBinding;
 
-  alight.version = '0.8.11';
+  alight.version = '0.8.14';
 
   alight.debug = {
     useObserver: false,
@@ -505,9 +525,9 @@
     dir.$init = function(element, expression, scope, env) {
       var doProcess, dscope;
       doProcess = function() {
-        var dp, i, l, len, n;
+        var dp, i, l, len, o;
         l = dscope.procLine;
-        for (i = n = 0, len = l.length; n < len; i = ++n) {
+        for (i = o = 0, len = l.length; o < len; i = ++o) {
           dp = l[i];
           dp.fn.call(dscope);
           if (dscope.isDeferred) {
@@ -532,7 +552,7 @@
         makeDeferred: function() {
           dscope.isDeferred = true;
           dscope.result.owner = true;
-          dscope.directive.scope = true;
+          dscope.doBinding = true;
           return function() {
             dscope.isDeferred = false;
             return doProcess();
@@ -620,7 +640,7 @@
     });
     return ext.push({
       code: 'scopeBinding',
-      fn: function(element, expression, scope, env) {
+      fn: function() {
         if (this.doBinding) {
           return alight.applyBindings(this.scope, this.element, {
             skip_attr: this.env.skippedAttr()
@@ -768,13 +788,13 @@
   process = (function() {
     var skippedAttr, takeAttr;
     takeAttr = function(name, skip) {
-      var attr, len, n, ref, value;
+      var attr, len, o, ref, value;
       if (arguments.length === 1) {
         skip = true;
       }
       ref = this.attributes;
-      for (n = 0, len = ref.length; n < len; n++) {
-        attr = ref[n];
+      for (o = 0, len = ref.length; o < len; o++) {
+        attr = ref[o];
         if (attr.attrName !== name) {
           continue;
         }
@@ -786,11 +806,11 @@
       }
     };
     skippedAttr = function() {
-      var attr, len, n, ref, results;
+      var attr, len, o, ref, results;
       ref = this.attributes;
       results = [];
-      for (n = 0, len = ref.length; n < len; n++) {
-        attr = ref[n];
+      for (o = 0, len = ref.length; o < len; o++) {
+        attr = ref[o];
         if (!attr.skip) {
           continue;
         }
@@ -799,7 +819,7 @@
       return results;
     };
     return function(scope, element, config) {
-      var args, attrName, attr_value, attrs, d, directive, e, env, fn, len, len1, list, n, node, o, ref, result, skip_attr, skip_children, value;
+      var args, attrName, attr_value, attrs, d, directive, e, env, fn, len, len1, list, node, o, q, ref, result, skip_attr, skip_children, value;
       config = config || {};
       skip_children = false;
       skip_attr = config.skip_attr || [];
@@ -823,8 +843,8 @@
           testDirective(attrName, args);
         }
         list = list.sort(sortByPriority);
-        for (n = 0, len = list.length; n < len; n++) {
-          d = list[n];
+        for (o = 0, len = list.length; o < len; o++) {
+          d = list[o];
           if (d.skip) {
             continue;
           }
@@ -870,8 +890,8 @@
       }
       if (!skip_children) {
         ref = f$.childNodes(element);
-        for (o = 0, len1 = ref.length; o < len1; o++) {
-          node = ref[o];
+        for (q = 0, len1 = ref.length; q < len1; q++) {
+          node = ref[q];
           if (!node) {
             continue;
           }
@@ -910,10 +930,14 @@
         scope = new NScope();
     } else scope = new Scope();
     ;
-    scope.$system = {
+    var ob, sys;
+    scope.$system = sys = {
       watches: {},
       watchList: [],
-      watch_any: [],
+      watchAny: [],
+      watchAnyAll: [],
+      watchFinishScan: [],
+      watchFinishScanAll: [],
       root: scope,
       children: [],
       scan_callbacks: [],
@@ -922,30 +946,36 @@
       finishBinding_lock: false
     };
     if (typeof conf.useObserver === 'boolean') {
-      scope.$system.useObserver = conf.useObserver;
+      sys.useObserver = conf.useObserver;
     } else {
-      scope.$system.useObserver = alight.debug.useObserver;
+      sys.useObserver = alight.debug.useObserver;
     }
-    if (scope.$system.useObserver) {
-      scope.$system.useObserver = !!Object.observe;
+    if (sys.useObserver) {
+      sys.useObserver = !!Object.observe;
     }
-    if (scope.$system.useObserver) {
-      scope.$system.obList = [];
-      scope.$system.obFire = [];
-      scope.$system.ob = alight.observer.observe(scope, {
+    if (sys.useObserver) {
+      sys.lineHead = null;
+      sys.lineTail = null;
+      sys.lineActive = false;
+      sys.prevSibling = null;
+      sys.nextSibling = null;
+      sys.obList = [];
+      sys.obFire = {};
+      sys.ob = ob = alight.observer.observe(scope, {
         rootEvent: function(key, value) {
-          var child, len, n, ref;
+          var child, len, o, ref;
           if (alight.debug.observer) {
             console.warn('Reobserve', key);
           }
           ref = scope.$system.children;
-          for (n = 0, len = ref.length; n < len; n++) {
-            child = ref[n];
+          for (o = 0, len = ref.length; o < len; o++) {
+            child = ref[o];
             child.$$rebuildObserve(key, value);
           }
           return null;
         }
       });
+      sys.observers = [ob];
     }
     return scope;
   };
@@ -953,12 +983,12 @@
   alight.Scope = Scope;
 
   Scope.prototype.$$rebuildObserve = function(key, value) {
-    var child, len, n, ref, scope;
+    var child, len, o, ref, scope;
     scope = this;
     alight.observer.reobserve(scope.$system.ob, key);
     ref = scope.$system.children;
-    for (n = 0, len = ref.length; n < len; n++) {
-      child = ref[n];
+    for (o = 0, len = ref.length; o < len; o++) {
+      child = ref[o];
       child.$$rebuildObserve(key, value);
     }
     return alight.observer.fire(scope.$system.ob, key, value);
@@ -972,34 +1002,39 @@
     } else {
       if (!scope.$system.ChildScope) {
         scope.$system.ChildScope = function() {
-          var cscope;
-          this.$system = {
+          var cscope, ob, root, sys;
+          root = scope.$system.root;
+          this.$system = sys = {
             watches: {},
             watchList: [],
-            watch_any: [],
-            root: scope.$system.root,
+            watchAny: [],
+            watchFinishScan: [],
+            root: root,
             children: [],
             destroy_callbacks: []
           };
           this.$parent = null;
-          if (scope.$system.root.$system.useObserver) {
+          if (root.$system.useObserver) {
             cscope = this;
-            this.$system.obList = [];
-            this.$system.obFire = [];
-            this.$system.ob = alight.observer.observe(this, {
+            sys.prevSibling = null;
+            sys.nextSibling = null;
+            sys.lineActive = false;
+            sys.obFire = {};
+            sys.ob = ob = alight.observer.observe(this, {
               rootEvent: function(key, value) {
-                var i, len, n, ref;
+                var i, len, o, ref;
                 if (alight.debug.observer) {
                   console.warn('Reobserve', key);
                 }
                 ref = cscope.$system.children;
-                for (n = 0, len = ref.length; n < len; n++) {
-                  i = ref[n];
+                for (o = 0, len = ref.length; o < len; o++) {
+                  i = ref[o];
                   i.$$rebuildObserve(key, value);
                 }
                 return null;
               }
             });
+            root.$system.observers.push(ob);
           }
           return this;
         };
@@ -1020,6 +1055,7 @@
           $any
           $destroy
           $finishBinding
+          $finishScan
       callback:
           function
       option:
@@ -1029,156 +1065,208 @@
           deep
    */
 
-  Scope.prototype.$watch = function(name, callback, option) {
-    var ce, d, exp, isFunction, isObserved, key, len, n, ob, r, realCallback, ref, returnValue, scope, value, variable;
-    scope = this;
-    if (option === true) {
-      option = {
-        isArray: true
-      };
-    } else if (!option) {
-      option = {};
+  injectToRootLine = function(scope) {
+    var rootSys, sys, t;
+    sys = scope.$system;
+    if (sys.lineActive) {
+      return;
     }
-    if (option.is_array) {
-      option.isArray = true;
-    }
-    if (f$.isFunction(name)) {
-      exp = name;
-      key = alight.utilits.getId();
-      isFunction = true;
+    rootSys = sys.root.$system;
+    sys.lineActive = true;
+    t = rootSys.lineTail;
+    if (t) {
+      rootSys.lineTail = t.$system.nextSibling = scope;
+      return sys.prevSibling = t;
     } else {
-      isFunction = false;
-      exp = null;
-      name = name.trim();
-      if (name.slice(0, 2) === '::') {
-        name = name.slice(2);
-        option.oneTime = true;
+      return rootSys.lineHead = rootSys.lineTail = scope;
+    }
+  };
+
+  (function() {
+    var WA, watchAny;
+    WA = function(callback) {
+      return this.cb = callback;
+    };
+    watchAny = function(scope, lkey, rkey, callback) {
+      var rootSys, sys, wa;
+      sys = scope.$system;
+      rootSys = sys.root.$system;
+      wa = new WA(callback);
+      sys[lkey].push(wa);
+      rootSys[rkey].push(wa);
+      return {
+        stop: function() {
+          var i, l;
+          l = sys[lkey];
+          i = l.indexOf(wa);
+          if (i >= 0) {
+            l.splice(i, 1);
+          }
+          l = rootSys[rkey];
+          i = l.indexOf(wa);
+          if (i >= 0) {
+            return l.splice(i, 1);
+          }
+        }
+      };
+    };
+    return Scope.prototype.$watch = function(name, callback, option) {
+      var ce, d, exp, isFunction, isObserved, key, len, o, ob, r, realCallback, ref, returnValue, rootSys, scope, sys, value, variable;
+      scope = this;
+      sys = scope.$system;
+      rootSys = sys.root.$system;
+      if (option === true) {
+        option = {
+          isArray: true
+        };
+      } else if (!option) {
+        option = {};
       }
-      key = name;
-      if (key === '$any') {
-        return scope.$system.watch_any.push(callback);
+      if (option.is_array) {
+        option.isArray = true;
       }
-      if (key === '$destroy') {
-        return scope.$system.destroy_callbacks.push(callback);
-      }
-      if (key === '$finishBinding') {
-        return scope.$system.root.$system.finishBinding_callbacks.push(callback);
-      }
-      if (option.deep) {
-        key = 'd#' + key;
-      } else if (option.isArray) {
-        key = 'a#' + key;
+      if (f$.isFunction(name)) {
+        exp = name;
+        key = alight.utilits.getId();
+        isFunction = true;
       } else {
-        key = 'v#' + key;
+        isFunction = false;
+        exp = null;
+        name = name.trim();
+        if (name.slice(0, 2) === '::') {
+          name = name.slice(2);
+          option.oneTime = true;
+        }
+        key = name;
+        if (key === '$any') {
+          return watchAny(scope, 'watchAny', 'watchAnyAll', callback);
+        }
+        if (key === '$finishScan') {
+          return watchAny(scope, 'watchFinishScan', 'watchFinishScanAll', callback);
+        }
+        if (key === '$destroy') {
+          return sys.destroy_callbacks.push(callback);
+        }
+        if (key === '$finishBinding') {
+          return rootSys.finishBinding_callbacks.push(callback);
+        }
+        if (option.deep) {
+          key = 'd#' + key;
+        } else if (option.isArray) {
+          key = 'a#' + key;
+        } else {
+          key = 'v#' + key;
+        }
       }
-    }
-    if (alight.debug.watch) {
-      console.log('$watch', name);
-    }
-    d = scope.$system.watches[key];
-    if (d) {
-      if (!option.readOnly) {
-        d.extraLoop = true;
+      if (alight.debug.watch) {
+        console.log('$watch', name);
       }
-      returnValue = d.value;
-    } else {
-      if (!isFunction) {
-        ce = scope.$compile(name, {
-          noBind: true,
-          full: true
-        });
-        exp = ce.fn;
-      }
-      returnValue = value = exp(scope);
-      if (option.deep) {
-        value = alight.utilits.clone(value);
-        option.isArray = false;
-      }
-      scope.$system.watches[key] = d = {
-        isArray: Boolean(option.isArray),
-        extraLoop: !option.readOnly,
-        deep: option.deep,
-        value: value,
-        callbacks: [],
-        exp: exp,
-        src: '' + name
-      };
-      isObserved = false;
-      if (scope.$system.root.$system.useObserver) {
-        if (!isFunction && !option.oneTime && !option.deep) {
-          if (ce.isSimple && ce.simpleVariables.length) {
-            isObserved = true;
-            if (d.isArray) {
-              d.value = null;
-            } else {
-              if (ce.isSimple < 2) {
-                isObserved = false;
+      d = sys.watches[key];
+      if (d) {
+        if (!option.readOnly) {
+          d.extraLoop = true;
+        }
+        returnValue = d.value;
+      } else {
+        if (!isFunction) {
+          ce = scope.$compile(name, {
+            noBind: true,
+            full: true
+          });
+          exp = ce.fn;
+        }
+        returnValue = value = exp(scope);
+        if (option.deep) {
+          value = alight.utilits.clone(value);
+          option.isArray = false;
+        }
+        sys.watches[key] = d = {
+          isArray: Boolean(option.isArray),
+          extraLoop: !option.readOnly,
+          deep: option.deep,
+          value: value,
+          callbacks: [],
+          exp: exp,
+          src: '' + name
+        };
+        isObserved = false;
+        if (rootSys.useObserver) {
+          if (!isFunction && !option.oneTime && !option.deep) {
+            if (ce.isSimple && ce.simpleVariables.length) {
+              isObserved = true;
+              if (d.isArray) {
+                d.value = null;
+              } else {
+                if (ce.isSimple < 2) {
+                  isObserved = false;
+                }
               }
-            }
-            if (isObserved) {
-              d.isObserved = true;
-              ref = ce.simpleVariables;
-              for (n = 0, len = ref.length; n < len; n++) {
-                variable = ref[n];
-                ob = alight.observer.watch(this.$system.ob, variable, function() {
-                  if (scope.$system.obFire[key]) {
-                    return;
-                  }
-                  scope.$system.obFire[key] = true;
-                  return scope.$system.obList.push(d);
-                });
+              if (isObserved) {
+                d.isObserved = true;
+                ref = ce.simpleVariables;
+                for (o = 0, len = ref.length; o < len; o++) {
+                  variable = ref[o];
+                  ob = alight.observer.watch(sys.ob, variable, function() {
+                    if (sys.obFire[key]) {
+                      return;
+                    }
+                    sys.obFire[key] = true;
+                    return rootSys.obList.push([scope, d]);
+                  });
+                }
               }
             }
           }
         }
-      }
-      if (option.isArray && !isObserved) {
-        if (f$.isArray(value)) {
-          d.value = value.slice();
-        } else {
-          d.value = null;
+        if (option.isArray && !isObserved) {
+          if (f$.isArray(value)) {
+            d.value = value.slice();
+          } else {
+            d.value = null;
+          }
+          returnValue = d.value;
         }
-        returnValue = d.value;
-      }
-      if (!isObserved) {
-        scope.$system.watchList.push(d);
-      }
-    }
-    r = {
-      $: d,
-      value: returnValue
-    };
-    if (option.oneTime) {
-      realCallback = callback;
-      callback = function(value) {
-        if (value === void 0) {
-          return;
+        if (!isObserved) {
+          sys.watchList.push(d);
+          injectToRootLine(scope);
         }
-        r.stop();
-        return realCallback(value);
+      }
+      r = {
+        $: d,
+        value: returnValue
       };
-    }
-    d.callbacks.push(callback);
-    r.stop = function() {
-      var i;
-      i = d.callbacks.indexOf(callback);
-      if (i >= 0) {
-        d.callbacks.splice(i, 1);
-        if (d.callbacks.length !== 0) {
-          return;
-        }
-        delete scope.$system.watches[key];
-        i = scope.$system.watchList.indexOf(d);
-        if (i >= 0) {
-          return scope.$system.watchList.splice(i, 1);
-        }
+      if (option.oneTime) {
+        realCallback = callback;
+        callback = function(value) {
+          if (value === void 0) {
+            return;
+          }
+          r.stop();
+          return realCallback(value);
+        };
       }
+      d.callbacks.push(callback);
+      r.stop = function() {
+        var i;
+        i = d.callbacks.indexOf(callback);
+        if (i >= 0) {
+          d.callbacks.splice(i, 1);
+          if (d.callbacks.length !== 0) {
+            return;
+          }
+          delete sys.watches[key];
+          i = sys.watchList.indexOf(d);
+          if (i >= 0) {
+            return sys.watchList.splice(i, 1);
+          }
+        }
+      };
+      if (option.init) {
+        callback(r.value);
+      }
+      return r;
     };
-    if (option.init) {
-      callback(r.value);
-    }
-    return r;
-  };
+  })();
 
 
   /*
@@ -1250,11 +1338,11 @@
           };
         } else {
           resp.fn = function() {
-            var a, e, i, len, n;
+            var a, e, i, len, o;
             try {
               a = [scope];
-              for (n = 0, len = arguments.length; n < len; n++) {
-                i = arguments[n];
+              for (o = 0, len = arguments.length; o < len; o++) {
+                i = arguments[o];
                 a.push(i);
               }
               return func.apply(null, a);
@@ -1296,20 +1384,46 @@
   };
 
   Scope.prototype.$destroy = function() {
-    var cb, i, it, len, len1, n, o, ref, ref1, scope;
+    var cb, cleanWatchAny, i, it, len, len1, n, o, p, q, ref, ref1, rootSys, scope, sys;
     scope = this;
-    ref = scope.$system.destroy_callbacks;
-    for (n = 0, len = ref.length; n < len; n++) {
-      cb = ref[n];
+    sys = scope.$system;
+    rootSys = scope.$system.root.$system;
+    ref = sys.destroy_callbacks;
+    for (o = 0, len = ref.length; o < len; o++) {
+      cb = ref[o];
       cb(scope);
     }
-    scope.$system.destroy_callbacks = [];
-    if (scope.$system.root.$system.useObserver) {
-      alight.observer.unobserve(scope.$system.ob);
+    sys.destroy_callbacks = [];
+    if (rootSys.useObserver) {
+      (function() {
+        var i, l, ob;
+        ob = sys.ob;
+        l = rootSys.observers;
+        i = l.indexOf(ob);
+        if (i >= 0) {
+          l.splice(i, 1);
+        }
+        return alight.observer.unobserve(ob);
+      })();
+      if (sys.lineActive) {
+        sys.lineActive = false;
+        p = sys.prevSibling;
+        n = sys.nextSibling;
+        if (p) {
+          p.$system.nextSibling = n;
+        } else {
+          rootSys.lineHead = n;
+        }
+        if (n) {
+          n.$system.prevSibling = p;
+        } else {
+          rootSys.lineTail = p;
+        }
+      }
     }
-    ref1 = scope.$system.children.slice();
-    for (o = 0, len1 = ref1.length; o < len1; o++) {
-      it = ref1[o];
+    ref1 = sys.children.slice();
+    for (q = 0, len1 = ref1.length; q < len1; q++) {
+      it = ref1[q];
       it.$destroy();
     }
     if (scope.$parent) {
@@ -1317,9 +1431,23 @@
       scope.$parent.$system.children.splice(i, 1);
     }
     scope.$parent = null;
-    scope.$system.watches = {};
-    scope.$system.watchList = [];
-    return scope.$system.watch_any.length = 0;
+    sys.watches = {};
+    sys.watchList = [];
+    cleanWatchAny = function(l, r) {
+      var len2, lst, ref2, s, w;
+      lst = rootSys[r];
+      ref2 = sys[l];
+      for (s = 0, len2 = ref2.length; s < len2; s++) {
+        w = ref2[s];
+        i = lst.indexOf(w);
+        if (i >= 0) {
+          lst.splice(i, 1);
+        }
+      }
+      return sys[l].length = 0;
+    };
+    cleanWatchAny('watchAny', 'watchAnyAll');
+    return cleanWatchAny('watchFinishScan', 'watchFinishScanAll');
   };
 
   get_time = (function() {
@@ -1334,7 +1462,7 @@
   })();
 
   notEqual = function(a, b) {
-    var i, len, n, ta, tb, v;
+    var i, len, o, ta, tb, v;
     if (a === null || b === null) {
       return true;
     }
@@ -1347,7 +1475,7 @@
       if (a.length !== b.length) {
         return true;
       }
-      for (i = n = 0, len = a.length; n < len; i = ++n) {
+      for (i = o = 0, len = a.length; o < len; i = ++o) {
         v = a[i];
         if (v !== b[i]) {
           return true;
@@ -1358,11 +1486,10 @@
   };
 
   scan_core = function(top, result) {
-    var a0, a1, anyList, callback, changes, extraLoop, index, last, len, len1, line, mutated, n, o, queue, ref, ref1, scope, sys, total, value, w;
+    var a0, a1, callback, changes, extraLoop, index, last, len, len1, line, mutated, o, q, queue, ref, ref1, scope, sys, total, value, w;
     extraLoop = false;
     changes = 0;
     total = 0;
-    anyList = [];
     line = [];
     queue = [top];
     while (queue) {
@@ -1372,8 +1499,8 @@
         sys = scope.$system;
         total += sys.watchList.length;
         ref = sys.watchList;
-        for (n = 0, len = ref.length; n < len; n++) {
-          w = ref[n];
+        for (o = 0, len = ref.length; o < len; o++) {
+          w = ref[o];
           result.src = w.src;
           last = w.value;
           value = w.exp(scope);
@@ -1413,8 +1540,8 @@
                 extraLoop = true;
               }
               ref1 = w.callbacks.slice();
-              for (o = 0, len1 = ref1.length; o < len1; o++) {
-                callback = ref1[o];
+              for (q = 0, len1 = ref1.length; q < len1; q++) {
+                callback = ref1[q];
                 callback.call(scope, value);
               }
             }
@@ -1425,9 +1552,6 @@
         }
         if (sys.children.length) {
           line.push(sys.children);
-        }
-        if (sys.watch_any.length) {
-          anyList.push.apply(anyList, sys.watch_any);
         }
         scope = queue[index++];
       }
@@ -1436,117 +1560,109 @@
     result.total = total;
     result.obTotal = 0;
     result.changes = changes;
-    result.extraLoop = extraLoop;
-    return result.anyList = anyList;
+    return result.extraLoop = extraLoop;
   };
 
-  scan_core2 = function(top, result) {
-    var a0, a1, anyList, callback, changes, extraLoop, index, last, len, len1, len2, len3, line, mutated, n, o, obTotal, p, q, queue, ref, ref1, ref2, ref3, scope, sys, total, value, w;
+  scan_core2 = function(root, result) {
+    var a0, a1, callback, changes, extraLoop, last, len, len1, len2, len3, len4, mutated, o, ob, obTotal, q, ref, ref1, ref2, ref3, ref4, rootSys, s, scope, sys, total, u, value, w, x, y;
     extraLoop = false;
     changes = 0;
     total = 0;
     obTotal = 0;
-    anyList = [];
-    line = [];
-    queue = [top];
-    while (queue) {
-      scope = queue[0];
-      index = 1;
-      while (scope) {
-        sys = scope.$system;
-        alight.observer.deliver(sys.ob);
-        ref = sys.obList;
-        for (n = 0, len = ref.length; n < len; n++) {
-          w = ref[n];
-          result.src = w.src;
-          last = w.value;
-          value = w.exp(scope);
-          if (last !== value) {
-            if (!w.isArray) {
-              w.value = value;
+    rootSys = root.$system;
+    ref = rootSys.observers;
+    for (o = 0, len = ref.length; o < len; o++) {
+      ob = ref[o];
+      alight.observer.deliver(ob);
+    }
+    ref1 = rootSys.obList;
+    for (q = 0, len1 = ref1.length; q < len1; q++) {
+      x = ref1[q];
+      scope = x[0];
+      w = x[1];
+      scope.$system.obFire = {};
+      result.src = w.src;
+      last = w.value;
+      value = w.exp(scope);
+      if (last !== value) {
+        if (!w.isArray) {
+          w.value = value;
+        }
+        changes++;
+        if (w.extraLoop) {
+          extraLoop = true;
+        }
+        ref2 = w.callbacks.slice();
+        for (s = 0, len2 = ref2.length; s < len2; s++) {
+          callback = ref2[s];
+          callback.call(scope, value);
+        }
+      }
+    }
+    obTotal += rootSys.obList.length;
+    rootSys.obList.length = 0;
+    scope = rootSys.lineHead;
+    while (scope) {
+      sys = scope.$system;
+      total += sys.watchList.length;
+      ref3 = sys.watchList;
+      for (u = 0, len3 = ref3.length; u < len3; u++) {
+        w = ref3[u];
+        result.src = w.src;
+        last = w.value;
+        value = w.exp(scope);
+        if (last !== value) {
+          mutated = false;
+          if (w.isArray) {
+            a0 = f$.isArray(last);
+            a1 = f$.isArray(value);
+            if (a0 === a1) {
+              if (a0) {
+                if (notEqual(last, value)) {
+                  w.value = value.slice();
+                  mutated = true;
+                }
+              }
+            } else {
+              mutated = true;
+              if (a1) {
+                w.value = value.slice();
+              } else {
+                w.value = null;
+              }
             }
+          } else if (w.deep) {
+            if (!alight.utilits.equal(last, value)) {
+              mutated = true;
+              w.value = alight.utilits.clone(value);
+            }
+          } else {
+            mutated = true;
+            w.value = value;
+          }
+          if (mutated) {
+            mutated = false;
             changes++;
             if (w.extraLoop) {
               extraLoop = true;
             }
-            ref1 = w.callbacks.slice();
-            for (o = 0, len1 = ref1.length; o < len1; o++) {
-              callback = ref1[o];
+            ref4 = w.callbacks.slice();
+            for (y = 0, len4 = ref4.length; y < len4; y++) {
+              callback = ref4[y];
               callback.call(scope, value);
             }
           }
-        }
-        obTotal += sys.obList.length;
-        sys.obList.length = 0;
-        sys.obFire = {};
-        total += sys.watchList.length;
-        ref2 = sys.watchList;
-        for (p = 0, len2 = ref2.length; p < len2; p++) {
-          w = ref2[p];
-          result.src = w.src;
-          last = w.value;
-          value = w.exp(scope);
-          if (last !== value) {
-            mutated = false;
-            if (w.isArray) {
-              a0 = f$.isArray(last);
-              a1 = f$.isArray(value);
-              if (a0 === a1) {
-                if (a0) {
-                  if (notEqual(last, value)) {
-                    w.value = value.slice();
-                    mutated = true;
-                  }
-                }
-              } else {
-                mutated = true;
-                if (a1) {
-                  w.value = value.slice();
-                } else {
-                  w.value = null;
-                }
-              }
-            } else if (w.deep) {
-              if (!alight.utilits.equal(last, value)) {
-                mutated = true;
-                w.value = alight.utilits.clone(value);
-              }
-            } else {
-              mutated = true;
-              w.value = value;
-            }
-            if (mutated) {
-              mutated = false;
-              changes++;
-              if (w.extraLoop) {
-                extraLoop = true;
-              }
-              ref3 = w.callbacks.slice();
-              for (q = 0, len3 = ref3.length; q < len3; q++) {
-                callback = ref3[q];
-                callback.call(scope, value);
-              }
-            }
-            if (alight.debug.scan > 1) {
-              console.log('changed:', w.src);
-            }
+          if (alight.debug.scan > 1) {
+            console.log('changed:', w.src);
           }
         }
-        if (sys.children.length) {
-          line.push(sys.children);
-        }
-        if (sys.watch_any.length) {
-          anyList.push.apply(anyList, sys.watch_any);
-        }
-        scope = queue[index++];
       }
-      queue = line.shift();
+      scope = sys.nextSibling;
     }
     result.total = total;
     result.obTotal = obTotal;
     result.changes = changes;
-    result.extraLoop = extraLoop;
-    return result.anyList = anyList;
+    return result.extraLoop = extraLoop;
   };
 
   Scope.prototype.$scanAsync = function(callback) {
@@ -1557,7 +1673,7 @@
   };
 
   Scope.prototype.$scan = function(cfg) {
-    var callback, cb, duration, e, len, len1, mainLoop, n, o, ref, result, root, scan_callbacks, start, top;
+    var callback, cb, duration, e, len, len1, len2, mainLoop, o, q, ref, ref1, result, root, rootSys, s, scan_callbacks, start;
     cfg = cfg || {};
     if (f$.isFunction(cfg)) {
       cfg = {
@@ -1565,55 +1681,58 @@
       };
     }
     root = this.$system.root;
-    top = cfg.top || root;
+    rootSys = root.$system;
     if (cfg.callback) {
-      root.$system.scan_callbacks.push(cfg.callback);
+      rootSys.scan_callbacks.push(cfg.callback);
     }
     if (cfg.late) {
-      if (top !== root) {
-        throw 'conflict: late and top';
-      }
-      if (root.$system.lateScan) {
+      if (rootSys.lateScan) {
         return;
       }
-      root.$system.lateScan = true;
+      rootSys.lateScan = true;
       alight.nextTick(function() {
-        if (root.$system.lateScan) {
+        if (rootSys.lateScan) {
           return root.$scan();
         }
       });
       return;
     }
-    if (root.$system.status === 'scaning') {
-      root.$system.extraLoop = true;
+    if (rootSys.status === 'scaning') {
+      rootSys.extraLoop = true;
       return;
     }
-    root.$system.lateScan = false;
-    root.$system.status = 'scaning';
-    scan_callbacks = root.$system.scan_callbacks.slice();
-    root.$system.scan_callbacks.length = 0;
+    rootSys.lateScan = false;
+    rootSys.status = 'scaning';
+    scan_callbacks = rootSys.scan_callbacks.slice();
+    rootSys.scan_callbacks.length = 0;
     if (alight.debug.scan) {
       start = get_time();
     }
     mainLoop = 10;
     try {
+      result = {
+        total: 0,
+        obTotal: 0,
+        changes: 0,
+        extraLoop: false,
+        src: ''
+      };
       while (mainLoop) {
         mainLoop--;
-        root.$system.extraLoop = false;
-        result = {};
-        if (root.$system.useObserver) {
-          scan_core2(top, result);
+        rootSys.extraLoop = false;
+        if (rootSys.useObserver) {
+          scan_core2(root, result);
         } else {
-          scan_core(top, result);
+          scan_core(root, result);
         }
         if (result.changes) {
-          ref = result.anyList;
-          for (n = 0, len = ref.length; n < len; n++) {
-            cb = ref[n];
+          ref = rootSys.watchAnyAll;
+          for (o = 0, len = ref.length; o < len; o++) {
+            cb = ref[o];
             cb();
           }
         }
-        if (!result.extraLoop && !root.$system.extraLoop) {
+        if (!result.extraLoop && !rootSys.extraLoop) {
           break;
         }
       }
@@ -1628,10 +1747,15 @@
         result: result
       });
     } finally {
-      root.$system.status = null;
-      for (o = 0, len1 = scan_callbacks.length; o < len1; o++) {
-        callback = scan_callbacks[o];
+      rootSys.status = null;
+      for (q = 0, len1 = scan_callbacks.length; q < len1; q++) {
+        callback = scan_callbacks[q];
         callback.call(root);
+      }
+      ref1 = rootSys.watchFinishScanAll;
+      for (s = 0, len2 = ref1.length; s < len2; s++) {
+        callback = ref1[s];
+        callback();
       }
     }
     if (mainLoop === 0) {
@@ -1651,9 +1775,9 @@
   (function() {
     var isStatic;
     isStatic = function(data) {
-      var i, len, n;
-      for (n = 0, len = data.length; n < len; n++) {
-        i = data[n];
+      var i, len, o;
+      for (o = 0, len = data.length; o < len; o++) {
+        i = data[o];
         if (i.type === 'expression' && !i["static"]) {
           return false;
         }
@@ -1661,7 +1785,7 @@
       return true;
     };
     return Scope.prototype.$compileText = function(text, cfg) {
-      var ce, d, data, exp, fn, len, n, response, scope, simple, sitem, watch_count;
+      var ce, d, data, exp, fn, len, o, response, scope, simple, sitem, watch_count;
       scope = this;
       cfg = cfg || {};
       sitem = alight.utilits.compile.buildSimpleText(text, null);
@@ -1709,8 +1833,8 @@
       data.scope = scope;
       watch_count = 0;
       simple = true;
-      for (n = 0, len = data.length; n < len; n++) {
-        d = data[n];
+      for (o = 0, len = data.length; o < len; o++) {
+        d = data[o];
         if (d.type === 'expression') {
           if (d.list[0][0] === '=') {
             d.list[0] = '#bindonce ' + d.list[0].slice(1);
@@ -1851,13 +1975,14 @@
    */
 
   Scope.prototype.$watchText = function(name, callback, config) {
-    var ct, d, len, n, ob, r, ref, scope, variable, w;
+    var ct, d, len, o, ob, r, ref, scope, sys, variable, w;
     scope = this;
+    sys = scope.$system;
     config = config || {};
     if (alight.debug.watchText) {
       console.log('$watchText', name);
     }
-    w = scope.$system.watches;
+    w = sys.watches;
     d = w[name];
     if (d) {
       if (!config.readOnly) {
@@ -1875,7 +2000,7 @@
         fullResponse: true,
         result_on_static: true,
         onStatic: function() {
-          var cb, len, n, ref, value;
+          var cb, len, o, ref, value;
           value = ct.fn.call(scope);
           d.exp = function() {
             return value;
@@ -1884,14 +2009,14 @@
             var i;
             d.callbacks.length = 0;
             delete w[name];
-            i = scope.$system.watchList.indexOf(d);
+            i = sys.watchList.indexOf(d);
             if (i >= 0) {
-              return scope.$system.watchList.splice(i, 1);
+              return sys.watchList.splice(i, 1);
             }
           });
           ref = d.onStatic;
-          for (n = 0, len = ref.length; n < len; n++) {
-            cb = ref[n];
+          for (o = 0, len = ref.length; o < len; o++) {
+            cb = ref[o];
             cb(value);
           }
           return null;
@@ -1905,21 +2030,22 @@
       d.exp = ct.fn;
       d.value = ct.fn(scope);
       w[name] = d;
-      if (ct.isSimple && scope.$system.root.$system.useObserver) {
+      if (ct.isSimple && sys.root.$system.useObserver) {
         d.isObserved = true;
         ref = ct.simpleVariables;
-        for (n = 0, len = ref.length; n < len; n++) {
-          variable = ref[n];
-          ob = alight.observer.watch(scope.$system.ob, variable, function() {
-            if (scope.$system.obFire[name]) {
+        for (o = 0, len = ref.length; o < len; o++) {
+          variable = ref[o];
+          ob = alight.observer.watch(sys.ob, variable, function() {
+            if (sys.obFire[name]) {
               return;
             }
-            scope.$system.obFire[name] = true;
-            return scope.$system.obList.push(d);
+            sys.obFire[name] = true;
+            return sys.root.$system.obList.push([scope, d]);
           });
         }
       } else {
-        scope.$system.watchList.push(d);
+        sys.watchList.push(d);
+        injectToRootLine(scope);
       }
     }
     if (config.onStatic) {
@@ -1939,9 +2065,9 @@
             return;
           }
           delete w[name];
-          i = scope.$system.watchList.indexOf(d);
+          i = sys.watchList.indexOf(d);
           if (i >= 0) {
-            return scope.$system.watchList.splice(i, 1);
+            return sys.watchList.splice(i, 1);
           }
         }
       }
@@ -1954,12 +2080,12 @@
     timer = null;
     list = [];
     exec = function() {
-      var callback, dlist, e, it, len, n, self;
+      var callback, dlist, e, it, len, o, self;
       timer = null;
       dlist = list.slice();
       list.length = 0;
-      for (n = 0, len = dlist.length; n < len; n++) {
-        it = dlist[n];
+      for (o = 0, len = dlist.length; o < len; o++) {
+        it = dlist[o];
         callback = it[0];
         self = it[1];
         try {
@@ -2036,25 +2162,26 @@
   };
 
   alight.applyBindings = function(scope, element, config) {
-    var cb, finishBinding, len, lst, n;
+    var cb, finishBinding, len, lst, o, rootSys;
     if (!element) {
       throw 'No element';
     }
     if (!scope) {
       scope = new alight.Scope();
     }
-    finishBinding = !scope.$system.root.$system.finishBinding_lock;
+    rootSys = scope.$system.root.$system;
+    finishBinding = !rootSys.finishBinding_lock;
     if (finishBinding) {
-      scope.$system.root.$system.finishBinding_lock = true;
+      rootSys.finishBinding_lock = true;
     }
     config = config || {};
     process(scope, element, config);
     if (finishBinding) {
-      scope.$system.root.$system.finishBinding_lock = false;
-      lst = scope.$system.root.$system.finishBinding_callbacks.slice();
-      scope.$system.root.$system.finishBinding_callbacks.length = 0;
-      for (n = 0, len = lst.length; n < len; n++) {
-        cb = lst[n];
+      rootSys.finishBinding_lock = false;
+      lst = rootSys.finishBinding_callbacks.slice();
+      rootSys.finishBinding_callbacks.length = 0;
+      for (o = 0, len = lst.length; o < len; o++) {
+        cb = lst[o];
         cb();
       }
     }
@@ -2062,7 +2189,7 @@
   };
 
   alight.bootstrap = function(input) {
-    var attr, ctrl, ctrlName, el, element, len, len1, n, o, ref, scope, t, tag;
+    var attr, ctrl, ctrlName, el, element, len, len1, o, q, ref, scope, t, tag;
     if (!input) {
       input = f$.find(document, '[al-app]');
     }
@@ -2070,8 +2197,8 @@
       input = [input];
     }
     if (f$.isArray(input) || typeof input.length === 'number') {
-      for (n = 0, len = input.length; n < len; n++) {
-        element = input[n];
+      for (o = 0, len = input.length; o < len; o++) {
+        element = input[o];
         if (element.ma_bootstrapped) {
           continue;
         }
@@ -2112,8 +2239,8 @@
           prototype: input
         });
         ref = f$.find(document.body, input.$el);
-        for (o = 0, len1 = ref.length; o < len1; o++) {
-          el = ref[o];
+        for (q = 0, len1 = ref.length; q < len1; q++) {
+          el = ref[q];
           alight.applyBindings(scope, el);
         }
         return scope;
