@@ -1,12 +1,18 @@
 (function() {
-	function buildAlight(alightConfig) {
-		alightConfig = alightConfig || {};
-		var enableGlobalControllers = alightConfig.globalControllers;
-		var alight = {};
-		var f$ = {};
-		alight.f$ = f$;
-		/* next postfix.js */
+    function buildAlight(alightConfig) {
+        alightConfig = alightConfig || {};
+        var enableGlobalControllers = alightConfig.globalControllers;
+        var alight = {};
+        var f$ = {};
+        alight.f$ = f$;
 
+
+        var removeItem = function(list, item) {
+            var i = list.indexOf(item);
+            if(i >= 0) list.splice(i, 1)
+            else console.warn('trying to remove not exist item')
+        };
+        /* next postfix.js */
 /* library to work with DOM */
 (function(){
 
@@ -442,10 +448,935 @@
 
 })();
 
-(function() {
-  var Scope, attrBinding, bindComment, directivePreprocessor, get_time, injectToRootLine, nodeTypeBind, notEqual, process, scan_core, scan_core2, sortByPriority, testDirective, textBinding;
 
-  alight.version = '0.8.14';
+/*
+
+root = alight.Scope()
+
+Scope::$new
+Scope::$watch
+Scope::$destroy
+
+ * can be bindable
+Scope::$compile
+    Scope::$eval
+    Scope::$getValue
+    Scope::$setValue
+
+ * only for root
+Scope::$scan
+    Scope::$scanAsync
+
+ * other
+Scope::$rebuildObserve
+
+makeWatch = (scope, $system) ->
+    (name, callback, options) ->
+        baseWatch name, callback, options, scope, $system
+
+ * new API
+scope = {}
+root = alight.core.root(conf)
+node = root.node(scope)
+root.scan(option)
+
+node.watch(src, callback, option)
+node.compile(src, option)
+node.destroy()
+root.destroy()
+ */
+
+(function() {
+  var Node, Root, WA, get_time, notEqual, scan_core2, self, watchAny;
+
+  alight.core = self = {};
+
+  self.root = function(conf) {
+    conf = conf || {};
+    return new Root(conf);
+  };
+
+  Root = function(conf) {
+    conf = conf || {};
+    this.nodeHead = null;
+    this.nodeTail = null;
+    this["private"] = {};
+    this.watchers = {
+      any: [],
+      finishBinding: [],
+      finishScan: [],
+      finishScanOnce: []
+    };
+    this.status = null;
+    this.extraLoop = false;
+    this.finishBinding_lock = false;
+    this.lateScan = false;
+    if (conf.useObserver) {
+      this.obList = [];
+      this.observer = alight.observer.create();
+      this.privateOb = this.observer.observe(this["private"]);
+    }
+    return this;
+  };
+
+  Root.prototype.destroy = function() {
+    if (this.observer) {
+      this.privateOb.destroy();
+      this.observer.destroy();
+    }
+    this.watchers.any.length = 0;
+    this.watchers.finishBinding.length = 0;
+    this.watchers.finishScan.length = 0;
+    return this.watchers.finishScanOnce.length = 0;
+  };
+
+  Root.prototype.node = function(scope, option) {
+    return new Node(this, scope, option);
+  };
+
+  Node = function(root, scope, option) {
+    this.scope = scope;
+    this.root = root;
+    this.watchers = {};
+    this.watchList = [];
+    this.destroy_callbacks = [];
+    this.lineActive = false;
+    this.prevSibling = null;
+    this.nextSibling = null;
+    this.rwatchers = {
+      any: [],
+      finishScan: []
+    };
+    if (root.observer) {
+      this.obFire = {};
+      this.ob = root.observer.observe(scope, option);
+    }
+    return this;
+  };
+
+  Node.prototype.destroy = function() {
+    var d, fn, j, k, l, len, len1, len2, m, n, node, p, ref, ref1, ref2, ref3, root, wa;
+    node = this;
+    root = node.root;
+    ref = node.destroy_callbacks;
+    for (j = 0, len = ref.length; j < len; j++) {
+      fn = ref[j];
+      fn();
+    }
+    if (node.ob) {
+      ref1 = node.watchers;
+      for (k in ref1) {
+        d = ref1[k];
+        if (d.privateOb) {
+          root.privateOb.unwatch(d.privateName, d.privateOb);
+        }
+      }
+      node.ob.destroy();
+      node.ob = null;
+    }
+    node.obFire = null;
+    node.destroy_callbacks.length = 0;
+    node.watchList.length = 0;
+    node.watchers.length = 0;
+    node.watchers = {};
+    ref2 = node.rwatchers.any;
+    for (l = 0, len1 = ref2.length; l < len1; l++) {
+      wa = ref2[l];
+      removeItem(root.watchers.any, wa);
+    }
+    node.rwatchers.any.length = 0;
+    ref3 = node.rwatchers.finishScan;
+    for (m = 0, len2 = ref3.length; m < len2; m++) {
+      wa = ref3[m];
+      removeItem(root.watchers.finishScan, wa);
+    }
+    node.rwatchers.finishScan.length = 0;
+    if (node.lineActive) {
+      node.lineActive = false;
+      p = node.prevSibling;
+      n = node.nextSibling;
+      if (p) {
+        p.nextSibling = n;
+      } else {
+        root.nodeHead = n;
+      }
+      if (n) {
+        return n.prevSibling = p;
+      } else {
+        return root.nodeTail = p;
+      }
+    }
+  };
+
+  WA = function(callback) {
+    return this.cb = callback;
+  };
+
+  watchAny = function(node, key, callback) {
+    var root, wa;
+    root = node.root;
+    wa = new WA(callback);
+    node.rwatchers[key].push(wa);
+    root.watchers[key].push(wa);
+    return {
+      stop: function() {
+        removeItem(node.rwatchers[key], wa);
+        return removeItem(root.watchers[key], wa);
+      }
+    };
+  };
+
+  Node.prototype.watch = function(name, callback, option) {
+    var ce, d, exp, isFunction, isObserved, j, key, len, node, privateName, r, realCallback, ref, returnValue, root, scope, t, value, variable;
+    node = this;
+    root = node.root;
+    scope = node.scope;
+    if (option.is_array) {
+      option.isArray = true;
+    }
+    if (f$.isFunction(name)) {
+      exp = name;
+      key = alight.utilits.getId();
+      isFunction = true;
+    } else {
+      isFunction = false;
+      exp = null;
+      name = name.trim();
+      if (name.slice(0, 2) === '::') {
+        name = name.slice(2);
+        option.oneTime = true;
+      }
+      if (option["private"]) {
+        if (option.oneTime || option.isArray || option.deep) {
+          throw 'Conflict $watch option private';
+        }
+        privateName = name;
+        name = '$system.root.private.' + name;
+      }
+      key = name;
+      if (key === '$any') {
+        return watchAny(node, 'any', callback);
+      }
+      if (key === '$finishScan') {
+        return watchAny(node, 'finishScan', callback);
+      }
+      if (key === '$finishScanOnce') {
+        return root.watchers.finishScanOnce.push(callback);
+      }
+      if (key === '$destroy') {
+        return node.destroy_callbacks.push(callback);
+      }
+      if (key === '$finishBinding') {
+        return root.watchers.finishBinding.push(callback);
+      }
+      if (option.deep) {
+        key = 'd#' + key;
+      } else if (option.isArray) {
+        key = 'a#' + key;
+      } else {
+        key = 'v#' + key;
+      }
+    }
+    if (alight.debug.watch) {
+      console.log('$watch', name);
+    }
+    d = node.watchers[key];
+    if (d) {
+      if (!option.readOnly) {
+        d.extraLoop = true;
+      }
+      returnValue = d.value;
+    } else {
+      if (!isFunction) {
+        if (option.watchText) {
+          exp = option.watchText.fn;
+          ce = {
+            isSimple: option.watchText.simpleVariables ? 2 : 0,
+            simpleVariables: option.watchText.simpleVariables
+          };
+        } else {
+          ce = node.compile(name, {
+            noBind: true,
+            full: true
+          });
+          exp = ce.fn;
+        }
+      }
+      returnValue = value = exp(scope);
+      if (option.deep) {
+        value = alight.utilits.clone(value);
+        option.isArray = false;
+      }
+      node.watchers[key] = d = {
+        isArray: Boolean(option.isArray),
+        extraLoop: !option.readOnly,
+        deep: option.deep,
+        value: value,
+        callbacks: [],
+        exp: exp,
+        src: '' + name
+      };
+      isObserved = false;
+      if (root.observer) {
+        if (!isFunction && !option.oneTime && !option.deep) {
+          if (ce.isSimple && ce.simpleVariables.length) {
+            isObserved = true;
+            if (d.isArray) {
+              d.value = null;
+            } else {
+              if (ce.isSimple < 2) {
+                isObserved = false;
+              }
+            }
+            if (isObserved) {
+              d.isObserved = true;
+              if (option["private"]) {
+                d.privateName = privateName;
+                d.privateOb = root.privateOb.watch(privateName, function() {
+                  if (node.obFire[key]) {
+                    return;
+                  }
+                  node.obFire[key] = true;
+                  return root.obList.push([node, d]);
+                });
+              } else {
+                d.obList = [];
+                ref = ce.simpleVariables;
+                for (j = 0, len = ref.length; j < len; j++) {
+                  variable = ref[j];
+                  d.obList.push({
+                    name: variable,
+                    callback: node.ob.watch(variable, function() {
+                      if (node.obFire[key]) {
+                        return;
+                      }
+                      node.obFire[key] = true;
+                      return root.obList.push([node, d]);
+                    })
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+      if (option.isArray && !isObserved) {
+        if (f$.isArray(value)) {
+          d.value = value.slice();
+        } else {
+          d.value = null;
+        }
+        returnValue = d.value;
+      }
+      if (!isObserved) {
+        node.watchList.push(d);
+        if (!node.lineActive) {
+          node.lineActive = true;
+          t = root.nodeTail;
+          if (t) {
+            root.nodeTail = t.nextSibling = node;
+            node.prevSibling = t;
+          } else {
+            root.nodeHead = root.nodeTail = node;
+          }
+        }
+      }
+    }
+    r = {
+      $: d,
+      value: returnValue
+    };
+    if (option.oneTime) {
+      realCallback = callback;
+      callback = function(value) {
+        if (value === void 0) {
+          return;
+        }
+        r.stop();
+        return realCallback(value);
+      };
+    }
+    d.callbacks.push(callback);
+    r.stop = function() {
+      var l, len1, ref1;
+      removeItem(d.callbacks, callback);
+      if (d.callbacks.length !== 0) {
+        return;
+      }
+      delete node.watchers[key];
+      if (d.isObserved) {
+        if (d.privateOb) {
+          root.privateOb.unwatch(d.privateName, d.privateOb);
+          d.privateOb = null;
+        }
+        if (d.obList) {
+          ref1 = d.obList;
+          for (l = 0, len1 = ref1.length; l < len1; l++) {
+            t = ref1[l];
+            node.ob.unwatch(t.name, t.callback);
+          }
+          return d.obList = null;
+        }
+      } else {
+        return removeItem(node.watchList, d);
+      }
+    };
+    if (option.init) {
+      callback(r.value);
+    }
+    return r;
+  };
+
+  Node.prototype.compile = function(src_exp, cfg) {
+    var cr, f1, filters, func, hash, resp, scope;
+    scope = this.scope;
+    cfg = cfg || {};
+    resp = {};
+    src_exp = src_exp.trim();
+    if (src_exp.slice(0, 2) === '::') {
+      src_exp = src_exp.slice(2);
+      resp.oneTime = true;
+    }
+    if (cfg.stringOrOneTime) {
+      cfg.string = !resp.oneTime;
+    }
+    hash = src_exp + '#';
+    hash += cfg.no_return ? '+' : '-';
+    hash += cfg.string ? 's' : 'v';
+    if (cfg.input) {
+      hash += cfg.input.join(',');
+    }
+    cr = alight.utilits.compile.expression(src_exp, {
+      scope: scope,
+      hash: hash,
+      no_return: cfg.no_return,
+      string: cfg.string,
+      input: cfg.input,
+      rawExpression: cfg.rawExpression
+    });
+    func = cr.fn;
+    filters = cr.filters;
+    resp.rawExpression = cr.rawExpression;
+    resp.isSimple = cr.isSimple;
+    resp.simpleVariables = cr.simpleVariables;
+    if (filters && filters.length) {
+      func = alight.utilits.filterBuilder(scope, func, filters);
+      if (cfg.string) {
+        f1 = func;
+        func = function() {
+          var __;
+          __ = f1.apply(this, arguments);
+          return "" + (__ || (__ != null ? __ : ''));
+        };
+      }
+    }
+    if (cfg.noBind) {
+      resp.fn = func;
+    } else {
+      if ((cfg.input || []).length < 4) {
+        resp.fn = function() {
+          var e;
+          try {
+            return func(scope, arguments[0], arguments[1], arguments[2]);
+          } catch (_error) {
+            e = _error;
+            return alight.exceptionHandler(e, 'Wrong in expression: ' + src_exp, {
+              src: src_exp,
+              cfg: cfg
+            });
+          }
+        };
+      } else {
+        resp.fn = function() {
+          var a, e, i, j, len;
+          try {
+            a = [scope];
+            for (j = 0, len = arguments.length; j < len; j++) {
+              i = arguments[j];
+              a.push(i);
+            }
+            return func.apply(null, a);
+          } catch (_error) {
+            e = _error;
+            return alight.exceptionHandler(e, 'Wrong in expression: ' + src_exp, {
+              src: src_exp,
+              cfg: cfg
+            });
+          }
+        };
+      }
+    }
+    if (cfg.full) {
+      return resp;
+    }
+    return resp.fn;
+  };
+
+  get_time = (function() {
+    if (window.performance) {
+      return function() {
+        return Math.floor(performance.now());
+      };
+    }
+    return function() {
+      return (new Date()).getTime();
+    };
+  })();
+
+  notEqual = function(a, b) {
+    var i, j, len, ta, tb, v;
+    if (a === null || b === null) {
+      return true;
+    }
+    ta = typeof a;
+    tb = typeof b;
+    if (ta !== tb) {
+      return true;
+    }
+    if (ta === 'object') {
+      if (a.length !== b.length) {
+        return true;
+      }
+      for (i = j = 0, len = a.length; j < len; i = ++j) {
+        v = a[i];
+        if (v !== b[i]) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  scan_core2 = function(root, result) {
+    var a0, a1, callback, changes, extraLoop, extraLoopFlag, j, l, last, len, len1, len2, len3, m, mutated, node, o, obList, obTotal, ref, ref1, ref2, scope, total, value, w, x;
+    extraLoop = false;
+    extraLoopFlag = false;
+    changes = 0;
+    total = 0;
+    obTotal = 0;
+    if (root.observer) {
+      root.observer.deliver();
+      obList = root.obList;
+      root.obList = [];
+      for (j = 0, len = obList.length; j < len; j++) {
+        x = obList[j];
+        node = x[0];
+        w = x[1];
+        scope = node.scope;
+        node.obFire = {};
+        result.src = w.src;
+        last = w.value;
+        value = w.exp(scope);
+        if (last !== value) {
+          if (!w.isArray) {
+            w.value = value;
+          }
+          changes++;
+          ref = w.callbacks.slice();
+          for (l = 0, len1 = ref.length; l < len1; l++) {
+            callback = ref[l];
+            if (callback.call(scope, value) !== '$scanNoChanges') {
+              extraLoopFlag = true;
+            }
+          }
+          if (extraLoopFlag && w.extraLoop) {
+            extraLoop = true;
+          }
+        }
+      }
+      obTotal += obList.length;
+    }
+    node = root.nodeHead;
+    while (node) {
+      scope = node.scope;
+      total += node.watchList.length;
+      ref1 = node.watchList.slice();
+      for (m = 0, len2 = ref1.length; m < len2; m++) {
+        w = ref1[m];
+        result.src = w.src;
+        last = w.value;
+        value = w.exp(scope);
+        if (last !== value) {
+          mutated = false;
+          if (w.isArray) {
+            a0 = f$.isArray(last);
+            a1 = f$.isArray(value);
+            if (a0 === a1) {
+              if (a0) {
+                if (notEqual(last, value)) {
+                  w.value = value.slice();
+                  mutated = true;
+                }
+              }
+            } else {
+              mutated = true;
+              if (a1) {
+                w.value = value.slice();
+              } else {
+                w.value = null;
+              }
+            }
+          } else if (w.deep) {
+            if (!alight.utilits.equal(last, value)) {
+              mutated = true;
+              w.value = alight.utilits.clone(value);
+            }
+          } else {
+            mutated = true;
+            w.value = value;
+          }
+          if (mutated) {
+            mutated = false;
+            changes++;
+            ref2 = w.callbacks.slice();
+            for (o = 0, len3 = ref2.length; o < len3; o++) {
+              callback = ref2[o];
+              if (callback.call(scope, value) !== '$scanNoChanges') {
+                extraLoopFlag = true;
+              }
+            }
+            if (extraLoopFlag && w.extraLoop) {
+              extraLoop = true;
+            }
+          }
+          if (alight.debug.scan > 1) {
+            console.log('changed:', w.src);
+          }
+        }
+      }
+      node = node.nextSibling;
+    }
+    result.total = total;
+    result.obTotal = obTotal;
+    result.changes = changes;
+    return result.extraLoop = extraLoop;
+  };
+
+  Root.prototype.scan = function(cfg) {
+    var callback, cb, duration, e, finishScanOnce, j, l, len, len1, len2, m, mainLoop, ref, ref1, result, root, start;
+    root = this;
+    cfg = cfg || {};
+    if (cfg.callback) {
+      root.watchers.finishScanOnce.push(cfg.callback);
+    }
+    if (cfg.late) {
+      if (root.lateScan) {
+        return;
+      }
+      root.lateScan = true;
+      alight.nextTick(function() {
+        if (root.lateScan) {
+          return root.scan();
+        }
+      });
+      return;
+    }
+    if (root.status === 'scaning') {
+      root.extraLoop = true;
+      return;
+    }
+    root.lateScan = false;
+    root.status = 'scaning';
+    finishScanOnce = root.watchers.finishScanOnce.slice();
+    root.watchers.finishScanOnce.length = 0;
+    if (alight.debug.scan) {
+      start = get_time();
+    }
+    mainLoop = 10;
+    try {
+      result = {
+        total: 0,
+        obTotal: 0,
+        changes: 0,
+        extraLoop: false,
+        src: ''
+      };
+      while (mainLoop) {
+        mainLoop--;
+        root.extraLoop = false;
+        scan_core2(root, result);
+        if (result.changes) {
+          ref = root.watchers.any;
+          for (j = 0, len = ref.length; j < len; j++) {
+            cb = ref[j];
+            cb();
+          }
+        }
+        if (!result.extraLoop && !root.extraLoop) {
+          break;
+        }
+      }
+      if (alight.debug.scan) {
+        duration = get_time() - start;
+        console.log("$scan: (" + (10 - mainLoop) + ") " + result.total + " + " + result.obTotal + " / " + duration + "ms");
+      }
+    } catch (_error) {
+      e = _error;
+      alight.exceptionHandler(e, '$scan, error in expression: ' + result.src, {
+        src: result.src,
+        result: result
+      });
+    } finally {
+      root.status = null;
+      ref1 = root.watchers.finishScan;
+      for (l = 0, len1 = ref1.length; l < len1; l++) {
+        callback = ref1[l];
+        callback();
+      }
+      for (m = 0, len2 = finishScanOnce.length; m < len2; m++) {
+        callback = finishScanOnce[m];
+        callback.call(root);
+      }
+    }
+    if (mainLoop === 0) {
+      throw 'Infinity loop detected';
+    }
+  };
+
+}).call(this);
+
+
+/*
+    Scope
+        prototype
+        parent
+        attachParent
+        root
+        useObserver
+ */
+
+(function() {
+  var Scope;
+
+  Scope = function(conf) {
+    var isRoot, k, objectProto, parent, proto, ref, root, scope, v;
+    if (this instanceof Scope) {
+      return this;
+    }
+    conf = conf || {};
+    if (conf.prototype) {
+      scope = conf.prototype;
+      if (!scope.$new) {
+        if (Object.setPrototypeOf) {
+          proto = scope;
+          objectProto = {}.__proto__;
+          while (proto.__proto__ !== objectProto) {
+            proto = proto.__proto__;
+          }
+          Object.setPrototypeOf(proto, Scope.prototype);
+        } else {
+          ref = Scope.prototype;
+          for (k in ref) {
+            v = ref[k];
+            scope[k] = v;
+          }
+        }
+      }
+    } else {
+      scope = new Scope();
+    }
+    if (conf.parent) {
+      if (conf.root) {
+        throw 'Conflict new Scope, root and parent together';
+      }
+      parent = conf.parent;
+      if (!parent.$system.exChildConstructor) {
+        parent.$system.exChildConstructor = function() {};
+        parent.$system.exChildConstructor.prototype = parent;
+      }
+      scope = new parent.$system.exChildConstructor;
+      root = parent.$system.root;
+      isRoot = false;
+    }
+    if (conf.root) {
+      root = conf.root;
+      isRoot = false;
+    }
+    if (!root) {
+      root = alight.core.root({
+        useObserver: (alight.debug.useObserver || conf.useObserver) && alight.observer.support()
+      });
+      isRoot = true;
+    }
+    scope.$system = root.node(scope, {
+      keywords: ['$system', '$parent', '$ns']
+    });
+    scope.$system.exIsRoot = isRoot;
+    scope.$system.exChildren = [];
+    if (conf.attachParent) {
+      scope.$parent = conf.attachParent;
+      conf.attachParent.$system.exChildren.push(scope);
+    }
+    if (scope.$system.ob) {
+      scope.$system.ob.rootEvent = function(key, value) {
+        var child, i, len, ref1;
+        ref1 = scope.$system.exChildren;
+        for (i = 0, len = ref1.length; i < len; i++) {
+          child = ref1[i];
+          child.$$rebuildObserve(key, value);
+        }
+        return null;
+      };
+    }
+    return scope;
+  };
+
+  alight.Scope = Scope;
+
+  Scope.prototype.$$rebuildObserve = function(key, value) {
+    var child, i, len, ref, scope;
+    scope = this;
+    scope.$system.ob.reobserve(key);
+    ref = scope.$system.exChildren;
+    for (i = 0, len = ref.length; i < len; i++) {
+      child = ref[i];
+      child.$$rebuildObserve(key, value);
+    }
+    return scope.$system.ob.fire(key, value);
+  };
+
+  Scope.prototype.$new = function(isolate) {
+    var parent, scope;
+    parent = this;
+    if (isolate) {
+      scope = alight.Scope({
+        root: parent.$system.root,
+        attachParent: parent
+      });
+    } else {
+      scope = alight.Scope({
+        parent: parent,
+        attachParent: parent
+      });
+    }
+    return scope;
+  };
+
+
+  /*
+  $watch
+      name:
+          expression or function
+          $any
+          $destroy
+          $finishBinding
+          $finishScan
+          $finishScanOnce
+      callback:
+          function
+      option:
+          isArray (is_array)
+          readOnly
+          init
+          deep
+   */
+
+  Scope.prototype.$watch = function(name, callback, option) {
+    option = option || {};
+    if (option === true) {
+      option = {
+        isArray: true
+      };
+    }
+    return this.$system.watch(name, callback, option);
+  };
+
+
+  /*
+      cfg:
+          no_return   - method without return (exec)
+          string      - method will return result as string
+          stringOrOneTime
+          input   - list of input arguments
+          full    - full response
+          noBind  - get function without bind to scope
+          rawExpression
+   */
+
+  Scope.prototype.$compile = function(src, option) {
+    return this.$system.compile(src, option);
+  };
+
+  Scope.prototype.$eval = function(exp) {
+    return this.$compile(exp, {
+      noBind: true
+    })(this);
+  };
+
+  Scope.prototype.$getValue = function(name) {
+    return this.$eval(name);
+  };
+
+  Scope.prototype.$setValue = function(name, value) {
+    var fn;
+    fn = this.$compile(name + ' = $value', {
+      input: ['$value'],
+      no_return: true,
+      noBind: true
+    });
+    return fn(this, value);
+  };
+
+  Scope.prototype.$destroy = function() {
+    var child, i, len, node, ref, root, scope;
+    scope = this;
+    node = scope.$system;
+    root = node.root;
+    if (!scope.$system.exIsRoot) {
+      removeItem(scope.$parent.$system.exChildren, scope);
+    }
+    ref = node.exChildren.slice();
+    for (i = 0, len = ref.length; i < len; i++) {
+      child = ref[i];
+      child.$destroy();
+    }
+    node.destroy();
+    if (scope.$system.exIsRoot) {
+      return root.destroy();
+    }
+
+    /*
+    
+     * fire callbacks
+    for cb in node.destroy_callbacks
+        cb scope
+    node.destroy_callbacks.length = 0
+    
+     * remove from parent
+    if scope.$parent
+        removeItem scope.$parent.$system.children, scope
+    
+     * remove watch
+    scope.$parent = null
+    node.watchers = {}
+    node.watchList = []
+     */
+  };
+
+  Scope.prototype.$scanAsync = function(callback) {
+    return this.$scan({
+      late: true,
+      callback: callback
+    });
+  };
+
+  Scope.prototype.$scan = function(option) {
+    if (f$.isFunction(option)) {
+      option = {
+        callback: option
+      };
+    } else {
+      option = option || {};
+    }
+    return this.$system.root.scan(option);
+  };
+
+}).call(this);
+
+(function() {
+  var attrBinding, bindComment, directivePreprocessor, nodeTypeBind, process, sortByPriority, testDirective, textBinding;
+
+  alight.version = '0.8.32';
 
   alight.debug = {
     useObserver: false,
@@ -525,9 +1456,9 @@
     dir.$init = function(element, expression, scope, env) {
       var doProcess, dscope;
       doProcess = function() {
-        var dp, i, l, len, o;
+        var dp, i, l, len, n;
         l = dscope.procLine;
-        for (i = o = 0, len = l.length; o < len; i = ++o) {
+        for (i = n = 0, len = l.length; n < len; i = ++n) {
           dp = l[i];
           dp.fn.call(dscope);
           if (dscope.isDeferred) {
@@ -707,11 +1638,10 @@
       return;
     }
     setter = function(result) {
-      return f$.attr(element, attrName, result);
+      f$.attr(element, attrName, result);
+      return '$scanNoChanges';
     };
-    w = scope.$watchText(text, setter, {
-      readOnly: true
-    });
+    w = scope.$watchText(text, setter);
     return setter(w.value);
   };
 
@@ -722,11 +1652,10 @@
       return;
     }
     setter = function(result) {
-      return node.nodeValue = result;
+      node.nodeValue = result;
+      return '$scanNoChanges';
     };
-    w = scope.$watchText(text, setter, {
-      readOnly: true
-    });
+    w = scope.$watchText(text, setter);
     return setter(w.value);
   };
 
@@ -788,13 +1717,13 @@
   process = (function() {
     var skippedAttr, takeAttr;
     takeAttr = function(name, skip) {
-      var attr, len, o, ref, value;
+      var attr, len, n, ref, value;
       if (arguments.length === 1) {
         skip = true;
       }
       ref = this.attributes;
-      for (o = 0, len = ref.length; o < len; o++) {
-        attr = ref[o];
+      for (n = 0, len = ref.length; n < len; n++) {
+        attr = ref[n];
         if (attr.attrName !== name) {
           continue;
         }
@@ -806,11 +1735,11 @@
       }
     };
     skippedAttr = function() {
-      var attr, len, o, ref, results;
+      var attr, len, n, ref, results;
       ref = this.attributes;
       results = [];
-      for (o = 0, len = ref.length; o < len; o++) {
-        attr = ref[o];
+      for (n = 0, len = ref.length; n < len; n++) {
+        attr = ref[n];
         if (!attr.skip) {
           continue;
         }
@@ -819,7 +1748,7 @@
       return results;
     };
     return function(scope, element, config) {
-      var args, attrName, attr_value, attrs, d, directive, e, env, fn, len, len1, list, node, o, q, ref, result, skip_attr, skip_children, value;
+      var args, attrName, attr_value, attrs, d, directive, e, env, fn, len, len1, list, n, node, o, ref, result, skip_attr, skip_children, value;
       config = config || {};
       skip_children = false;
       skip_attr = config.skip_attr || [];
@@ -843,8 +1772,8 @@
           testDirective(attrName, args);
         }
         list = list.sort(sortByPriority);
-        for (o = 0, len = list.length; o < len; o++) {
-          d = list[o];
+        for (n = 0, len = list.length; n < len; n++) {
+          d = list[n];
           if (d.skip) {
             continue;
           }
@@ -890,8 +1819,8 @@
       }
       if (!skip_children) {
         ref = f$.childNodes(element);
-        for (q = 0, len1 = ref.length; q < len1; q++) {
-          node = ref[q];
+        for (o = 0, len1 = ref.length; o < len1; o++) {
+          node = ref[o];
           if (!node) {
             continue;
           }
@@ -911,1181 +1840,17 @@
     8: bindComment
   };
 
-  Scope = function(conf) {
-    
-    if(this instanceof Scope) return this;
-
-    conf = conf || {};
-    var scope;
-    if(conf.prototype) {
-        var Parent = function() {};
-        Parent.prototype = conf.prototype;
-        var parent = new Parent();
-        var proto = Scope.prototype;
-        for(var k in proto)
-            if(proto.hasOwnProperty(k)) parent[k] = proto[k];
-
-        var NScope = function() {};
-        NScope.prototype = parent;
-        scope = new NScope();
-    } else scope = new Scope();
-    ;
-    var ob, sys;
-    scope.$system = sys = {
-      watches: {},
-      watchList: [],
-      watchAny: [],
-      watchAnyAll: [],
-      watchFinishScan: [],
-      watchFinishScanAll: [],
-      root: scope,
-      children: [],
-      scan_callbacks: [],
-      destroy_callbacks: [],
-      finishBinding_callbacks: [],
-      finishBinding_lock: false
-    };
-    if (typeof conf.useObserver === 'boolean') {
-      sys.useObserver = conf.useObserver;
-    } else {
-      sys.useObserver = alight.debug.useObserver;
-    }
-    if (sys.useObserver) {
-      sys.useObserver = !!Object.observe;
-    }
-    if (sys.useObserver) {
-      sys.lineHead = null;
-      sys.lineTail = null;
-      sys.lineActive = false;
-      sys.prevSibling = null;
-      sys.nextSibling = null;
-      sys.obList = [];
-      sys.obFire = {};
-      sys.ob = ob = alight.observer.observe(scope, {
-        rootEvent: function(key, value) {
-          var child, len, o, ref;
-          if (alight.debug.observer) {
-            console.warn('Reobserve', key);
-          }
-          ref = scope.$system.children;
-          for (o = 0, len = ref.length; o < len; o++) {
-            child = ref[o];
-            child.$$rebuildObserve(key, value);
-          }
-          return null;
-        }
-      });
-      sys.observers = [ob];
-    }
-    return scope;
-  };
-
-  alight.Scope = Scope;
-
-  Scope.prototype.$$rebuildObserve = function(key, value) {
-    var child, len, o, ref, scope;
-    scope = this;
-    alight.observer.reobserve(scope.$system.ob, key);
-    ref = scope.$system.children;
-    for (o = 0, len = ref.length; o < len; o++) {
-      child = ref[o];
-      child.$$rebuildObserve(key, value);
-    }
-    return alight.observer.fire(scope.$system.ob, key, value);
-  };
-
-  Scope.prototype.$new = function(isolate) {
-    var child, scope;
-    scope = this;
-    if (isolate) {
-      child = alight.Scope();
-    } else {
-      if (!scope.$system.ChildScope) {
-        scope.$system.ChildScope = function() {
-          var cscope, ob, root, sys;
-          root = scope.$system.root;
-          this.$system = sys = {
-            watches: {},
-            watchList: [],
-            watchAny: [],
-            watchFinishScan: [],
-            root: root,
-            children: [],
-            destroy_callbacks: []
-          };
-          this.$parent = null;
-          if (root.$system.useObserver) {
-            cscope = this;
-            sys.prevSibling = null;
-            sys.nextSibling = null;
-            sys.lineActive = false;
-            sys.obFire = {};
-            sys.ob = ob = alight.observer.observe(this, {
-              rootEvent: function(key, value) {
-                var i, len, o, ref;
-                if (alight.debug.observer) {
-                  console.warn('Reobserve', key);
-                }
-                ref = cscope.$system.children;
-                for (o = 0, len = ref.length; o < len; o++) {
-                  i = ref[o];
-                  i.$$rebuildObserve(key, value);
-                }
-                return null;
-              }
-            });
-            root.$system.observers.push(ob);
-          }
-          return this;
-        };
-        scope.$system.ChildScope.prototype = scope;
-      }
-      child = new scope.$system.ChildScope();
-    }
-    child.$parent = scope;
-    scope.$system.children.push(child);
-    return child;
-  };
-
-
-  /*
-  $watch
-      name:
-          expression or function
-          $any
-          $destroy
-          $finishBinding
-          $finishScan
-      callback:
-          function
-      option:
-          isArray (is_array)
-          readOnly
-          init
-          deep
-   */
-
-  injectToRootLine = function(scope) {
-    var rootSys, sys, t;
-    sys = scope.$system;
-    if (sys.lineActive) {
-      return;
-    }
-    rootSys = sys.root.$system;
-    sys.lineActive = true;
-    t = rootSys.lineTail;
-    if (t) {
-      rootSys.lineTail = t.$system.nextSibling = scope;
-      return sys.prevSibling = t;
-    } else {
-      return rootSys.lineHead = rootSys.lineTail = scope;
-    }
-  };
-
-  (function() {
-    var WA, watchAny;
-    WA = function(callback) {
-      return this.cb = callback;
-    };
-    watchAny = function(scope, lkey, rkey, callback) {
-      var rootSys, sys, wa;
-      sys = scope.$system;
-      rootSys = sys.root.$system;
-      wa = new WA(callback);
-      sys[lkey].push(wa);
-      rootSys[rkey].push(wa);
-      return {
-        stop: function() {
-          var i, l;
-          l = sys[lkey];
-          i = l.indexOf(wa);
-          if (i >= 0) {
-            l.splice(i, 1);
-          }
-          l = rootSys[rkey];
-          i = l.indexOf(wa);
-          if (i >= 0) {
-            return l.splice(i, 1);
-          }
-        }
-      };
-    };
-    return Scope.prototype.$watch = function(name, callback, option) {
-      var ce, d, exp, isFunction, isObserved, key, len, o, ob, r, realCallback, ref, returnValue, rootSys, scope, sys, value, variable;
-      scope = this;
-      sys = scope.$system;
-      rootSys = sys.root.$system;
-      if (option === true) {
-        option = {
-          isArray: true
-        };
-      } else if (!option) {
-        option = {};
-      }
-      if (option.is_array) {
-        option.isArray = true;
-      }
-      if (f$.isFunction(name)) {
-        exp = name;
-        key = alight.utilits.getId();
-        isFunction = true;
-      } else {
-        isFunction = false;
-        exp = null;
-        name = name.trim();
-        if (name.slice(0, 2) === '::') {
-          name = name.slice(2);
-          option.oneTime = true;
-        }
-        key = name;
-        if (key === '$any') {
-          return watchAny(scope, 'watchAny', 'watchAnyAll', callback);
-        }
-        if (key === '$finishScan') {
-          return watchAny(scope, 'watchFinishScan', 'watchFinishScanAll', callback);
-        }
-        if (key === '$destroy') {
-          return sys.destroy_callbacks.push(callback);
-        }
-        if (key === '$finishBinding') {
-          return rootSys.finishBinding_callbacks.push(callback);
-        }
-        if (option.deep) {
-          key = 'd#' + key;
-        } else if (option.isArray) {
-          key = 'a#' + key;
-        } else {
-          key = 'v#' + key;
-        }
-      }
-      if (alight.debug.watch) {
-        console.log('$watch', name);
-      }
-      d = sys.watches[key];
-      if (d) {
-        if (!option.readOnly) {
-          d.extraLoop = true;
-        }
-        returnValue = d.value;
-      } else {
-        if (!isFunction) {
-          ce = scope.$compile(name, {
-            noBind: true,
-            full: true
-          });
-          exp = ce.fn;
-        }
-        returnValue = value = exp(scope);
-        if (option.deep) {
-          value = alight.utilits.clone(value);
-          option.isArray = false;
-        }
-        sys.watches[key] = d = {
-          isArray: Boolean(option.isArray),
-          extraLoop: !option.readOnly,
-          deep: option.deep,
-          value: value,
-          callbacks: [],
-          exp: exp,
-          src: '' + name
-        };
-        isObserved = false;
-        if (rootSys.useObserver) {
-          if (!isFunction && !option.oneTime && !option.deep) {
-            if (ce.isSimple && ce.simpleVariables.length) {
-              isObserved = true;
-              if (d.isArray) {
-                d.value = null;
-              } else {
-                if (ce.isSimple < 2) {
-                  isObserved = false;
-                }
-              }
-              if (isObserved) {
-                d.isObserved = true;
-                ref = ce.simpleVariables;
-                for (o = 0, len = ref.length; o < len; o++) {
-                  variable = ref[o];
-                  ob = alight.observer.watch(sys.ob, variable, function() {
-                    if (sys.obFire[key]) {
-                      return;
-                    }
-                    sys.obFire[key] = true;
-                    return rootSys.obList.push([scope, d]);
-                  });
-                }
-              }
-            }
-          }
-        }
-        if (option.isArray && !isObserved) {
-          if (f$.isArray(value)) {
-            d.value = value.slice();
-          } else {
-            d.value = null;
-          }
-          returnValue = d.value;
-        }
-        if (!isObserved) {
-          sys.watchList.push(d);
-          injectToRootLine(scope);
-        }
-      }
-      r = {
-        $: d,
-        value: returnValue
-      };
-      if (option.oneTime) {
-        realCallback = callback;
-        callback = function(value) {
-          if (value === void 0) {
-            return;
-          }
-          r.stop();
-          return realCallback(value);
-        };
-      }
-      d.callbacks.push(callback);
-      r.stop = function() {
-        var i;
-        i = d.callbacks.indexOf(callback);
-        if (i >= 0) {
-          d.callbacks.splice(i, 1);
-          if (d.callbacks.length !== 0) {
-            return;
-          }
-          delete sys.watches[key];
-          i = sys.watchList.indexOf(d);
-          if (i >= 0) {
-            return sys.watchList.splice(i, 1);
-          }
-        }
-      };
-      if (option.init) {
-        callback(r.value);
-      }
-      return r;
-    };
-  })();
-
-
-  /*
-      cfg:
-          no_return   - method without return (exec)
-          string      - method will return result as string
-          stringOrOneTime
-          input   - list of input arguments
-          full    - full response
-          noBind  - get function without bind to scope
-          rawExpression
-   */
-
-  (function() {
-    return Scope.prototype.$compile = function(src_exp, cfg) {
-      var cr, f1, filters, func, hash, resp, scope;
-      cfg = cfg || {};
-      scope = this;
-      resp = {};
-      src_exp = src_exp.trim();
-      if (src_exp.slice(0, 2) === '::') {
-        src_exp = src_exp.slice(2);
-        resp.oneTime = true;
-      }
-      if (cfg.stringOrOneTime) {
-        cfg.string = !resp.oneTime;
-      }
-      hash = src_exp + '#';
-      hash += cfg.no_return ? '+' : '-';
-      hash += cfg.string ? 's' : 'v';
-      if (cfg.input) {
-        hash += cfg.input.join(',');
-      }
-      cr = alight.utilits.compile.expression(src_exp, {
-        scope: scope,
-        hash: hash,
-        no_return: cfg.no_return,
-        string: cfg.string,
-        input: cfg.input,
-        rawExpression: cfg.rawExpression
-      });
-      func = cr.fn;
-      filters = cr.filters;
-      resp.rawExpression = cr.rawExpression;
-      resp.isSimple = cr.isSimple;
-      resp.simpleVariables = cr.simpleVariables;
-      if (filters && filters.length) {
-        func = alight.utilits.filterBuilder(scope, func, filters);
-        if (cfg.string) {
-          f1 = func;
-          func = function() { var __ = f1.apply(this, arguments); return '' + (__ || (__ == null?'':__)) };
-        }
-      }
-      if (cfg.noBind) {
-        resp.fn = func;
-      } else {
-        if ((cfg.input || []).length < 4) {
-          resp.fn = function() {
-            var e;
-            try {
-              return func(scope, arguments[0], arguments[1], arguments[2]);
-            } catch (_error) {
-              e = _error;
-              return alight.exceptionHandler(e, 'Wrong in expression: ' + src_exp, {
-                src: src_exp,
-                cfg: cfg
-              });
-            }
-          };
-        } else {
-          resp.fn = function() {
-            var a, e, i, len, o;
-            try {
-              a = [scope];
-              for (o = 0, len = arguments.length; o < len; o++) {
-                i = arguments[o];
-                a.push(i);
-              }
-              return func.apply(null, a);
-            } catch (_error) {
-              e = _error;
-              return alight.exceptionHandler(e, 'Wrong in expression: ' + src_exp, {
-                src: src_exp,
-                cfg: cfg
-              });
-            }
-          };
-        }
-      }
-      if (cfg.full) {
-        return resp;
-      }
-      return resp.fn;
-    };
-  })();
-
-  Scope.prototype.$eval = function(exp) {
-    return this.$compile(exp, {
-      noBind: true
-    })(this);
-  };
-
-  Scope.prototype.$getValue = function(name) {
-    return this.$eval(name);
-  };
-
-  Scope.prototype.$setValue = function(name, value) {
-    var fn;
-    fn = this.$compile(name + ' = $value', {
-      input: ['$value'],
-      no_return: true,
-      noBind: true
-    });
-    return fn(this, value);
-  };
-
-  Scope.prototype.$destroy = function() {
-    var cb, cleanWatchAny, i, it, len, len1, n, o, p, q, ref, ref1, rootSys, scope, sys;
-    scope = this;
-    sys = scope.$system;
-    rootSys = scope.$system.root.$system;
-    ref = sys.destroy_callbacks;
-    for (o = 0, len = ref.length; o < len; o++) {
-      cb = ref[o];
-      cb(scope);
-    }
-    sys.destroy_callbacks = [];
-    if (rootSys.useObserver) {
-      (function() {
-        var i, l, ob;
-        ob = sys.ob;
-        l = rootSys.observers;
-        i = l.indexOf(ob);
-        if (i >= 0) {
-          l.splice(i, 1);
-        }
-        return alight.observer.unobserve(ob);
-      })();
-      if (sys.lineActive) {
-        sys.lineActive = false;
-        p = sys.prevSibling;
-        n = sys.nextSibling;
-        if (p) {
-          p.$system.nextSibling = n;
-        } else {
-          rootSys.lineHead = n;
-        }
-        if (n) {
-          n.$system.prevSibling = p;
-        } else {
-          rootSys.lineTail = p;
-        }
-      }
-    }
-    ref1 = sys.children.slice();
-    for (q = 0, len1 = ref1.length; q < len1; q++) {
-      it = ref1[q];
-      it.$destroy();
-    }
-    if (scope.$parent) {
-      i = scope.$parent.$system.children.indexOf(scope);
-      scope.$parent.$system.children.splice(i, 1);
-    }
-    scope.$parent = null;
-    sys.watches = {};
-    sys.watchList = [];
-    cleanWatchAny = function(l, r) {
-      var len2, lst, ref2, s, w;
-      lst = rootSys[r];
-      ref2 = sys[l];
-      for (s = 0, len2 = ref2.length; s < len2; s++) {
-        w = ref2[s];
-        i = lst.indexOf(w);
-        if (i >= 0) {
-          lst.splice(i, 1);
-        }
-      }
-      return sys[l].length = 0;
-    };
-    cleanWatchAny('watchAny', 'watchAnyAll');
-    return cleanWatchAny('watchFinishScan', 'watchFinishScanAll');
-  };
-
-  get_time = (function() {
-    if (window.performance) {
-      return function() {
-        return Math.floor(performance.now());
-      };
-    }
-    return function() {
-      return (new Date()).getTime();
-    };
-  })();
-
-  notEqual = function(a, b) {
-    var i, len, o, ta, tb, v;
-    if (a === null || b === null) {
-      return true;
-    }
-    ta = typeof a;
-    tb = typeof b;
-    if (ta !== tb) {
-      return true;
-    }
-    if (ta === 'object') {
-      if (a.length !== b.length) {
-        return true;
-      }
-      for (i = o = 0, len = a.length; o < len; i = ++o) {
-        v = a[i];
-        if (v !== b[i]) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-
-  scan_core = function(top, result) {
-    var a0, a1, callback, changes, extraLoop, index, last, len, len1, line, mutated, o, q, queue, ref, ref1, scope, sys, total, value, w;
-    extraLoop = false;
-    changes = 0;
-    total = 0;
-    line = [];
-    queue = [top];
-    while (queue) {
-      scope = queue[0];
-      index = 1;
-      while (scope) {
-        sys = scope.$system;
-        total += sys.watchList.length;
-        ref = sys.watchList;
-        for (o = 0, len = ref.length; o < len; o++) {
-          w = ref[o];
-          result.src = w.src;
-          last = w.value;
-          value = w.exp(scope);
-          if (last !== value) {
-            mutated = false;
-            if (w.isArray) {
-              a0 = f$.isArray(last);
-              a1 = f$.isArray(value);
-              if (a0 === a1) {
-                if (a0) {
-                  if (notEqual(last, value)) {
-                    w.value = value.slice();
-                    mutated = true;
-                  }
-                }
-              } else {
-                mutated = true;
-                if (a1) {
-                  w.value = value.slice();
-                } else {
-                  w.value = null;
-                }
-              }
-            } else if (w.deep) {
-              if (!alight.utilits.equal(last, value)) {
-                mutated = true;
-                w.value = alight.utilits.clone(value);
-              }
-            } else {
-              mutated = true;
-              w.value = value;
-            }
-            if (mutated) {
-              mutated = false;
-              changes++;
-              if (w.extraLoop) {
-                extraLoop = true;
-              }
-              ref1 = w.callbacks.slice();
-              for (q = 0, len1 = ref1.length; q < len1; q++) {
-                callback = ref1[q];
-                callback.call(scope, value);
-              }
-            }
-            if (alight.debug.scan > 1) {
-              console.log('changed:', w.src);
-            }
-          }
-        }
-        if (sys.children.length) {
-          line.push(sys.children);
-        }
-        scope = queue[index++];
-      }
-      queue = line.shift();
-    }
-    result.total = total;
-    result.obTotal = 0;
-    result.changes = changes;
-    return result.extraLoop = extraLoop;
-  };
-
-  scan_core2 = function(root, result) {
-    var a0, a1, callback, changes, extraLoop, last, len, len1, len2, len3, len4, mutated, o, ob, obTotal, q, ref, ref1, ref2, ref3, ref4, rootSys, s, scope, sys, total, u, value, w, x, y;
-    extraLoop = false;
-    changes = 0;
-    total = 0;
-    obTotal = 0;
-    rootSys = root.$system;
-    ref = rootSys.observers;
-    for (o = 0, len = ref.length; o < len; o++) {
-      ob = ref[o];
-      alight.observer.deliver(ob);
-    }
-    ref1 = rootSys.obList;
-    for (q = 0, len1 = ref1.length; q < len1; q++) {
-      x = ref1[q];
-      scope = x[0];
-      w = x[1];
-      scope.$system.obFire = {};
-      result.src = w.src;
-      last = w.value;
-      value = w.exp(scope);
-      if (last !== value) {
-        if (!w.isArray) {
-          w.value = value;
-        }
-        changes++;
-        if (w.extraLoop) {
-          extraLoop = true;
-        }
-        ref2 = w.callbacks.slice();
-        for (s = 0, len2 = ref2.length; s < len2; s++) {
-          callback = ref2[s];
-          callback.call(scope, value);
-        }
-      }
-    }
-    obTotal += rootSys.obList.length;
-    rootSys.obList.length = 0;
-    scope = rootSys.lineHead;
-    while (scope) {
-      sys = scope.$system;
-      total += sys.watchList.length;
-      ref3 = sys.watchList;
-      for (u = 0, len3 = ref3.length; u < len3; u++) {
-        w = ref3[u];
-        result.src = w.src;
-        last = w.value;
-        value = w.exp(scope);
-        if (last !== value) {
-          mutated = false;
-          if (w.isArray) {
-            a0 = f$.isArray(last);
-            a1 = f$.isArray(value);
-            if (a0 === a1) {
-              if (a0) {
-                if (notEqual(last, value)) {
-                  w.value = value.slice();
-                  mutated = true;
-                }
-              }
-            } else {
-              mutated = true;
-              if (a1) {
-                w.value = value.slice();
-              } else {
-                w.value = null;
-              }
-            }
-          } else if (w.deep) {
-            if (!alight.utilits.equal(last, value)) {
-              mutated = true;
-              w.value = alight.utilits.clone(value);
-            }
-          } else {
-            mutated = true;
-            w.value = value;
-          }
-          if (mutated) {
-            mutated = false;
-            changes++;
-            if (w.extraLoop) {
-              extraLoop = true;
-            }
-            ref4 = w.callbacks.slice();
-            for (y = 0, len4 = ref4.length; y < len4; y++) {
-              callback = ref4[y];
-              callback.call(scope, value);
-            }
-          }
-          if (alight.debug.scan > 1) {
-            console.log('changed:', w.src);
-          }
-        }
-      }
-      scope = sys.nextSibling;
-    }
-    result.total = total;
-    result.obTotal = obTotal;
-    result.changes = changes;
-    return result.extraLoop = extraLoop;
-  };
-
-  Scope.prototype.$scanAsync = function(callback) {
-    return this.$scan({
-      late: true,
-      callback: callback
-    });
-  };
-
-  Scope.prototype.$scan = function(cfg) {
-    var callback, cb, duration, e, len, len1, len2, mainLoop, o, q, ref, ref1, result, root, rootSys, s, scan_callbacks, start;
-    cfg = cfg || {};
-    if (f$.isFunction(cfg)) {
-      cfg = {
-        callback: cfg
-      };
-    }
-    root = this.$system.root;
-    rootSys = root.$system;
-    if (cfg.callback) {
-      rootSys.scan_callbacks.push(cfg.callback);
-    }
-    if (cfg.late) {
-      if (rootSys.lateScan) {
-        return;
-      }
-      rootSys.lateScan = true;
-      alight.nextTick(function() {
-        if (rootSys.lateScan) {
-          return root.$scan();
-        }
-      });
-      return;
-    }
-    if (rootSys.status === 'scaning') {
-      rootSys.extraLoop = true;
-      return;
-    }
-    rootSys.lateScan = false;
-    rootSys.status = 'scaning';
-    scan_callbacks = rootSys.scan_callbacks.slice();
-    rootSys.scan_callbacks.length = 0;
-    if (alight.debug.scan) {
-      start = get_time();
-    }
-    mainLoop = 10;
-    try {
-      result = {
-        total: 0,
-        obTotal: 0,
-        changes: 0,
-        extraLoop: false,
-        src: ''
-      };
-      while (mainLoop) {
-        mainLoop--;
-        rootSys.extraLoop = false;
-        if (rootSys.useObserver) {
-          scan_core2(root, result);
-        } else {
-          scan_core(root, result);
-        }
-        if (result.changes) {
-          ref = rootSys.watchAnyAll;
-          for (o = 0, len = ref.length; o < len; o++) {
-            cb = ref[o];
-            cb();
-          }
-        }
-        if (!result.extraLoop && !rootSys.extraLoop) {
-          break;
-        }
-      }
-      if (alight.debug.scan) {
-        duration = get_time() - start;
-        console.log("$scan: (" + (10 - mainLoop) + ") " + result.total + " + " + result.obTotal + " / " + duration + "ms");
-      }
-    } catch (_error) {
-      e = _error;
-      alight.exceptionHandler(e, '$scan, error in expression: ' + result.src, {
-        src: result.src,
-        result: result
-      });
-    } finally {
-      rootSys.status = null;
-      for (q = 0, len1 = scan_callbacks.length; q < len1; q++) {
-        callback = scan_callbacks[q];
-        callback.call(root);
-      }
-      ref1 = rootSys.watchFinishScanAll;
-      for (s = 0, len2 = ref1.length; s < len2; s++) {
-        callback = ref1[s];
-        callback();
-      }
-    }
-    if (mainLoop === 0) {
-      throw 'Infinity loop detected';
-    }
-  };
-
-
-  /*
-      $compileText = (text, cfg)
-      cfg:
-          result_on_static
-          onStatic
-          fullResponse
-   */
-
-  (function() {
-    var isStatic;
-    isStatic = function(data) {
-      var i, len, o;
-      for (o = 0, len = data.length; o < len; o++) {
-        i = data[o];
-        if (i.type === 'expression' && !i["static"]) {
-          return false;
-        }
-      }
-      return true;
-    };
-    return Scope.prototype.$compileText = function(text, cfg) {
-      var ce, d, data, exp, fn, len, o, response, scope, simple, sitem, watch_count;
-      scope = this;
-      cfg = cfg || {};
-      sitem = alight.utilits.compile.buildSimpleText(text, null);
-      if (sitem) {
-        if (cfg.fullResponse) {
-          response = {
-            type: 'fn',
-            fn: sitem.fn,
-            isSimple: sitem.isSimple,
-            simpleVariables: sitem.simpleVariables
-          };
-        } else {
-          response = sitem.fn;
-        }
-        return response;
-      }
-      if (text.indexOf(alight.utilits.pars_start_tag) < 0) {
-        if (cfg.result_on_static) {
-          if (cfg.fullResponse) {
-            response = {
-              type: 'text',
-              text: text
-            };
-          } else {
-            response = text;
-          }
-        } else {
-          if (cfg.fullResponse) {
-            response = {
-              type: 'fn',
-              isStatic: true,
-              fn: function() {
-                return text;
-              }
-            };
-          } else {
-            response = function() {
-              return text;
-            };
-          }
-        }
-        return response;
-      }
-      data = alight.utilits.parsText(text);
-      data.scope = scope;
-      watch_count = 0;
-      simple = true;
-      for (o = 0, len = data.length; o < len; o++) {
-        d = data[o];
-        if (d.type === 'expression') {
-          if (d.list[0][0] === '=') {
-            d.list[0] = '#bindonce ' + d.list[0].slice(1);
-          }
-          exp = d.list.join(' | ');
-          if (exp[0] === '#') {
-            simple = false;
-            (function(d) {
-              var async, env;
-              async = false;
-              env = {
-                data: d,
-                setter: function(value) {
-                  return d.value = value;
-                },
-                "finally": function(value) {
-                  if (arguments.length === 1) {
-                    env.setter(value);
-                  }
-                  d["static"] = true;
-                  if (async && cfg.onStatic && isStatic(data)) {
-                    return cfg.onStatic();
-                  }
-                }
-              };
-              alight.text.$base(scope, d, env);
-              return async = true;
-            })(d);
-            if (!d["static"]) {
-              watch_count++;
-            }
-          } else {
-            ce = scope.$compile(exp, {
-              stringOrOneTime: true,
-              full: true,
-              rawExpression: true,
-              noBind: true
-            });
-            if (ce.oneTime) {
-              simple = false;
-              (function(d, ce) {
-                return d.fn = function() {
-                  var v;
-                  v = ce.fn(scope);
-                  if (v === void 0) {
-                    return '';
-                  }
-                  if (v === null) {
-                    v = '';
-                  }
-                  d.fn = function() {
-                    return v;
-                  };
-                  d["static"] = true;
-                  if (cfg.onStatic && isStatic(data)) {
-                    cfg.onStatic();
-                  }
-                  return v;
-                };
-              })(d, ce);
-            } else {
-              d.fn = ce.fn;
-              if (ce.rawExpression) {
-                d.re = ce.rawExpression;
-                if (ce.isSimple) {
-                  d.isSimple = true;
-                  d.simpleVariables = ce.simpleVariables;
-                }
-              } else {
-                simple = false;
-              }
-            }
-            watch_count++;
-          }
-        }
-      }
-      if (watch_count) {
-        if (simple) {
-          sitem = alight.utilits.compile.buildSimpleText(text, data);
-          if (cfg.fullResponse) {
-            response = {
-              type: 'fn',
-              fn: sitem.fn,
-              isSimple: sitem.isSimple,
-              simpleVariables: sitem.simpleVariables
-            };
-          } else {
-            response = sitem.fn;
-          }
-        } else {
-          response = alight.utilits.compile.buildText(text, data);
-          if (cfg.fullResponse) {
-            response = {
-              type: 'fn',
-              fn: response
-            };
-          }
-        }
-        return response;
-      } else {
-        fn = alight.utilits.compile.buildText(text, data);
-        text = fn();
-        if (cfg.result_on_static) {
-          if (cfg.fullResponse) {
-            response = {
-              type: 'text',
-              text: text
-            };
-          } else {
-            response = text;
-          }
-        } else {
-          response = function() {
-            return text;
-          };
-          if (cfg.fullResponse) {
-            response = {
-              type: 'fn',
-              isStatic: true,
-              fn: response
-            };
-          }
-        }
-        return response;
-      }
-    };
-  })();
-
-  Scope.prototype.$evalText = function(exp) {
-    return this.$compileText(exp)(this);
-  };
-
-
-  /*
-      Scope.$watchText(name, callback, config)
-      config.readOnly
-      config.onStatic
-   */
-
-  Scope.prototype.$watchText = function(name, callback, config) {
-    var ct, d, len, o, ob, r, ref, scope, sys, variable, w;
-    scope = this;
-    sys = scope.$system;
-    config = config || {};
-    if (alight.debug.watchText) {
-      console.log('$watchText', name);
-    }
-    w = sys.watches;
-    d = w[name];
-    if (d) {
-      if (!config.readOnly) {
-        d.extraLoop = true;
-      }
-    } else {
-      d = {
-        extraLoop: !config.readOnly,
-        isArray: false,
-        callbacks: [],
-        onStatic: [],
-        src: name
-      };
-      ct = scope.$compileText(name, {
-        fullResponse: true,
-        result_on_static: true,
-        onStatic: function() {
-          var cb, len, o, ref, value;
-          value = ct.fn.call(scope);
-          d.exp = function() {
-            return value;
-          };
-          scope.$scanAsync(function() {
-            var i;
-            d.callbacks.length = 0;
-            delete w[name];
-            i = sys.watchList.indexOf(d);
-            if (i >= 0) {
-              return sys.watchList.splice(i, 1);
-            }
-          });
-          ref = d.onStatic;
-          for (o = 0, len = ref.length; o < len; o++) {
-            cb = ref[o];
-            cb(value);
-          }
-          return null;
-        }
-      });
-      if (ct.type === 'text') {
-        return {
-          value: ct.text
-        };
-      }
-      d.exp = ct.fn;
-      d.value = ct.fn(scope);
-      w[name] = d;
-      if (ct.isSimple && sys.root.$system.useObserver) {
-        d.isObserved = true;
-        ref = ct.simpleVariables;
-        for (o = 0, len = ref.length; o < len; o++) {
-          variable = ref[o];
-          ob = alight.observer.watch(sys.ob, variable, function() {
-            if (sys.obFire[name]) {
-              return;
-            }
-            sys.obFire[name] = true;
-            return sys.root.$system.obList.push([scope, d]);
-          });
-        }
-      } else {
-        sys.watchList.push(d);
-        injectToRootLine(scope);
-      }
-    }
-    if (config.onStatic) {
-      d.onStatic.push(config.onStatic);
-    }
-    d.callbacks.push(callback);
-    r = {
-      $: d,
-      value: d.value,
-      exp: d.exp,
-      stop: function() {
-        var i;
-        i = d.callbacks.indexOf(callback);
-        if (i >= 0) {
-          d.callbacks.splice(i, 1);
-          if (d.callbacks.length !== 0) {
-            return;
-          }
-          delete w[name];
-          i = sys.watchList.indexOf(d);
-          if (i >= 0) {
-            return sys.watchList.splice(i, 1);
-          }
-        }
-      }
-    };
-    return r;
-  };
-
   alight.nextTick = (function() {
     var exec, list, timer;
     timer = null;
     list = [];
     exec = function() {
-      var callback, dlist, e, it, len, o, self;
+      var callback, dlist, e, it, len, n, self;
       timer = null;
       dlist = list.slice();
       list.length = 0;
-      for (o = 0, len = dlist.length; o < len; o++) {
-        it = dlist[o];
+      for (n = 0, len = dlist.length; n < len; n++) {
+        it = dlist[n];
         callback = it[0];
         self = it[1];
         try {
@@ -2137,51 +1902,27 @@
     return filter;
   };
 
-  alight.text.$base = function(scope, data, env) {
-    var dir, dir_name, exp, filter, i;
-    exp = data.list[0];
-    i = exp.indexOf(' ');
-    if (i < 0) {
-      dir_name = exp.slice(1);
-      exp = '';
-    } else {
-      dir_name = exp.slice(1, i);
-      exp = exp.slice(i);
-    }
-    dir = alight.text[dir_name];
-    if (!dir) {
-      throw 'No directive alight.text.' + dir_name;
-    }
-    if (data.list.length > 1) {
-      filter = alight.utilits.filterBuilder(scope, null, data.list.slice(1));
-      env.setter = function(result) {
-        return data.value = filter(result);
-      };
-    }
-    return dir(env.setter, exp, scope, env);
-  };
-
   alight.applyBindings = function(scope, element, config) {
-    var cb, finishBinding, len, lst, o, rootSys;
+    var cb, finishBinding, len, lst, n, root;
     if (!element) {
       throw 'No element';
     }
     if (!scope) {
-      scope = new alight.Scope();
+      scope = alight.Scope();
     }
-    rootSys = scope.$system.root.$system;
-    finishBinding = !rootSys.finishBinding_lock;
+    root = scope.$system.root;
+    finishBinding = !root.finishBinding_lock;
     if (finishBinding) {
-      rootSys.finishBinding_lock = true;
+      root.finishBinding_lock = true;
     }
     config = config || {};
     process(scope, element, config);
     if (finishBinding) {
-      rootSys.finishBinding_lock = false;
-      lst = rootSys.finishBinding_callbacks.slice();
-      rootSys.finishBinding_callbacks.length = 0;
-      for (o = 0, len = lst.length; o < len; o++) {
-        cb = lst[o];
+      root.finishBinding_lock = false;
+      lst = root.watchers.finishBinding.slice();
+      root.watchers.finishBinding.length = 0;
+      for (n = 0, len = lst.length; n < len; n++) {
+        cb = lst[n];
         cb();
       }
     }
@@ -2189,7 +1930,7 @@
   };
 
   alight.bootstrap = function(input) {
-    var attr, ctrl, ctrlName, el, element, len, len1, o, q, ref, scope, t, tag;
+    var attr, ctrl, ctrlName, el, element, len, len1, n, o, ref, scope, t, tag;
     if (!input) {
       input = f$.find(document, '[al-app]');
     }
@@ -2197,8 +1938,8 @@
       input = [input];
     }
     if (f$.isArray(input) || typeof input.length === 'number') {
-      for (o = 0, len = input.length; o < len; o++) {
-        element = input[o];
+      for (n = 0, len = input.length; n < len; n++) {
+        element = input[n];
         if (element.ma_bootstrapped) {
           continue;
         }
@@ -2238,10 +1979,14 @@
         scope = alight.Scope({
           prototype: input
         });
-        ref = f$.find(document.body, input.$el);
-        for (q = 0, len1 = ref.length; q < len1; q++) {
-          el = ref[q];
-          alight.applyBindings(scope, el);
+        if (input.$el instanceof HTMLElement) {
+          alight.applyBindings(scope, input.$el);
+        } else {
+          ref = f$.find(document.body, input.$el);
+          for (o = 0, len1 = ref.length; o < len1; o++) {
+            el = ref[o];
+            alight.applyBindings(scope, el);
+          }
         }
         return scope;
       } else {
@@ -2252,6 +1997,229 @@
     }
     return null;
   };
+
+}).call(this);
+
+(function() {
+  (function() {
+
+    /*
+        Scope.$watchText(name, callback, config)
+        args:
+            config.readOnly
+            config.onStatic
+        result:
+            isStatic: flag
+            $: watch-object
+            value: current value
+            exp: expression
+            stop: function to stop watch
+    
+    
+        expressin points
+            simple: {{model}}
+            text-directive: {{#dir model}} {{=staticModel}} {{::oneTimeBinding}}
+            with function: {{fn()}}
+            with filter: {{value | filter}}
+     */
+    var getId;
+    getId = (function() {
+      var i;
+      i = 0;
+      return function() {
+        i++;
+        return 'wt' + i;
+      };
+    })();
+    alight.text.$base = function(conf) {
+      var dir, dirName, env, exp, i, point, scope;
+      point = conf.point;
+      exp = conf.exp;
+      i = exp.indexOf(' ');
+      if (i < 0) {
+        dirName = exp.slice(1);
+        exp = '';
+      } else {
+        dirName = exp.slice(1, i);
+        exp = exp.slice(i);
+      }
+      scope = conf.scope;
+      if (scope.$ns && scope.$ns.text) {
+        dir = scope.$ns.text[dirName];
+      } else {
+        dir = alight.text[dirName];
+      }
+      if (!dir) {
+        throw 'No directive alight.text.' + dirName;
+      }
+      env = {
+        setter: function(value) {
+          if (value === null) {
+            point.value = '';
+          } else {
+            point.value = '' + value;
+          }
+          return conf.update();
+        },
+        "finally": function(value) {
+          if (value === null) {
+            point.value = '';
+          } else {
+            point.value = '' + value;
+          }
+          point.type = 'text';
+          return conf["finally"]();
+        }
+      };
+      return dir(env.setter, exp, scope, env);
+    };
+    return alight.Scope.prototype.$watchText = function(expression, callback, config) {
+      var canUseObserver, canUseSimpleBuilder, ce, d, data, doFinally, doUpdate, exp, fn, hasDirectives, j, k, key, len, len1, noCache, scope, st, value, w, watchCount;
+      config = config || {};
+      scope = this;
+      if (alight.debug.watchText) {
+        console.log('$watchText', expression);
+      }
+      st = alight.utilits.compile.buildSimpleText(expression, null);
+      if (st) {
+        return scope.$watch(expression, callback, {
+          watchText: st
+        });
+      }
+      data = alight.utilits.parsText(expression);
+      watchCount = 0;
+      canUseObserver = true;
+      canUseSimpleBuilder = true;
+      hasDirectives = false;
+      noCache = false;
+      doUpdate = doFinally = function() {};
+      for (j = 0, len = data.length; j < len; j++) {
+        d = data[j];
+        if (d.type === 'expression') {
+          exp = d.list.join(' | ');
+          if (exp[0] === '=') {
+            exp = '#bindonce ' + exp.slice(1);
+          } else if (exp.slice(0, 2) === '::') {
+            exp = '#oneTimeBinding ' + exp.slice(2);
+          }
+          if (exp[0] === '#') {
+            alight.text.$base({
+              exp: exp,
+              scope: scope,
+              point: d,
+              update: function() {
+                return doUpdate();
+              },
+              "finally": function() {
+                doUpdate();
+                return doFinally();
+              }
+            });
+            noCache = true;
+            if (d.type !== 'text') {
+              watchCount++;
+              hasDirectives = true;
+              canUseObserver = false;
+              canUseSimpleBuilder = false;
+            }
+          } else {
+            ce = scope.$compile(exp, {
+              string: true,
+              full: true,
+              rawExpression: true,
+              noBind: true
+            });
+            d.fn = ce.fn;
+            if (ce.rawExpression) {
+              d.re = ce.rawExpression;
+              if (ce.isSimple > 1) {
+                d.simpleVariables = ce.simpleVariables;
+              } else {
+                canUseObserver = false;
+              }
+            } else {
+              canUseObserver = false;
+              canUseSimpleBuilder = false;
+            }
+            watchCount++;
+          }
+        }
+      }
+      if (!watchCount) {
+        value = '';
+        for (k = 0, len1 = data.length; k < len1; k++) {
+          d = data[k];
+          value += d.value;
+        }
+        return {
+          isStatic: true,
+          value: value
+        };
+      }
+      if (canUseObserver) {
+        if (noCache) {
+          st = alight.utilits.compile.buildSimpleText(null, data);
+        } else {
+          st = alight.utilits.compile.buildSimpleText(expression, data);
+        }
+        return scope.$watch(expression, callback, {
+          watchText: st
+        });
+      }
+      if (canUseSimpleBuilder) {
+        if (noCache) {
+          st = alight.utilits.compile.buildSimpleText(null, data);
+        } else {
+          st = alight.utilits.compile.buildSimpleText(expression, data);
+        }
+        return scope.$watch(expression, callback, {
+          watchText: {
+            fn: st.fn
+          }
+        });
+      }
+      if (!hasDirectives) {
+        data.scope = scope;
+        fn = alight.utilits.compile.buildText(expression, data);
+        return scope.$watch(expression, callback, {
+          watchText: {
+            fn: fn
+          }
+        });
+      }
+      w = null;
+      key = getId();
+      data.scope = scope;
+      fn = alight.utilits.compile.buildText(expression, data);
+      doUpdate = function() {
+        return scope.$system.root["private"][key] = fn();
+      };
+      doFinally = function() {
+        var i, l, len2;
+        i = true;
+        for (l = 0, len2 = data.length; l < len2; l++) {
+          d = data[l];
+          if (d.type === 'expression') {
+            i = false;
+            break;
+          }
+        }
+        if (!i) {
+          return;
+        }
+        scope.$watch('$finishScanOnce', function() {
+          return w.stop();
+        });
+        if (config.onStatic) {
+          return config.onStatic();
+        }
+      };
+      doUpdate();
+      return w = scope.$watch(key, callback, {
+        "private": true
+      });
+    };
+  })();
 
 }).call(this);
 
@@ -2337,10 +2305,7 @@
       r = {};
       for (k in d) {
         v = d[k];
-        if (k === '$alite_id') {
-          continue;
-        }
-        if (k === '$$observer') {
+        if (k[0] === '$') {
           continue;
         }
         r[k] = clone(v);
@@ -2870,7 +2835,7 @@
   self.cacheText = {};
 
   self.buildText = function(text, data) {
-    var d, fn, index, j, len, result;
+    var d, escapedValue, fn, index, j, len, result;
     fn = self.cacheText[text];
     if (fn) {
       return function() {
@@ -2887,7 +2852,8 @@
           result.push("((x=this[" + index + "].value) || (x == null?'':x))");
         }
       } else if (d.value) {
-        result.push('"' + d.value.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n') + '"');
+        escapedValue = d.value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+        result.push('"' + escapedValue + '"');
       }
     }
     result = result.join(' + ');
@@ -2901,37 +2867,34 @@
   self.cacheSimpleText = {};
 
   self.buildSimpleText = function(text, data) {
-    var d, fn, index, isSimple, item, j, len, result, simpleVariables;
-    item = self.cacheSimpleText[text];
+    var d, escapedValue, fn, index, item, j, len, result, simpleVariables;
+    item = text ? self.cacheSimpleText[text] : null;
     if (item || !data) {
       return item || null;
     }
     result = [];
-    isSimple = true;
     simpleVariables = [];
     for (index = j = 0, len = data.length; j < len; index = ++j) {
       d = data[index];
       if (d.type === 'expression') {
         result.push("(" + d.re + ")");
-        if (d.isSimple) {
+        if (d.simpleVariables) {
           simpleVariables.push.apply(simpleVariables, d.simpleVariables);
-        } else {
-          isSimple = false;
         }
       } else if (d.value) {
-        result.push('"' + d.value.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n') + '"');
+        escapedValue = d.value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+        result.push('"' + escapedValue + '"');
       }
     }
     result = result.join(' + ');
     fn = self.Function('$$scope', "var $$, __; return (" + result + ")");
     item = {
-      fn: fn
+      fn: fn,
+      simpleVariables: simpleVariables
     };
-    if (isSimple) {
-      item.isSimple = true;
-      item.simpleVariables = simpleVariables;
+    if (text) {
+      self.cacheSimpleText[text] = item;
     }
-    self.cacheSimpleText[text] = item;
     return item;
   };
 
@@ -2942,6 +2905,19 @@
 
   alight.text.bindonce = function(callback, expression, scope, env) {
     return env["finally"](scope.$eval(expression));
+  };
+
+  alight.text.oneTimeBinding = function(callback, expression, scope, env) {
+    var w;
+    return w = scope.$watch(expression, function(value) {
+      if (value === void 0) {
+        return;
+      }
+      w.stop();
+      return env["finally"](value);
+    }, {
+      init: true
+    });
   };
 
   dirs = alight.directives.al;
@@ -3020,9 +2996,10 @@
         if (self.changing) {
           return;
         }
-        if (!(value === void 0 || value === null)) {
-          return f$.val(element, value);
+        if (value == null) {
+          value = '';
         }
+        return f$.val(element, value);
       },
       initDom: function() {
         return self.updateDom(init_value);
@@ -3358,56 +3335,61 @@
   dirs["if"] = {
     priority: 700,
     init: function(element, name, scope, env) {
-      var base_element, child, init_value, item, self, top_element;
-      item = null;
-      child = null;
-      base_element = null;
-      top_element = null;
-      init_value = false;
+      var self;
       return self = {
-        direction: true,
         owner: true,
+        item: null,
+        child: null,
+        base_element: null,
+        top_element: null,
+        init_value: false,
         start: function() {
           self.prepare();
           self.watchModel();
           return self.initUpdate();
         },
         prepare: function() {
-          base_element = element;
-          top_element = f$.createComment(" " + env.attrName + ": " + name + " ");
-          f$.before(element, top_element);
+          self.base_element = element;
+          self.top_element = f$.createComment(" " + env.attrName + ": " + name + " ");
+          f$.before(element, self.top_element);
           return f$.remove(element);
         },
         updateDom: function(value) {
-          if (!value === self.direction) {
-            if (!child) {
-              return;
-            }
-            child.$destroy();
-            self.removeDom(item);
-            child = null;
-            return item = null;
+          if (value) {
+            return self.insertBlock(value);
           } else {
-            if (child) {
-              return;
-            }
-            item = f$.clone(base_element);
-            self.insertDom(top_element, item);
-            child = scope.$new();
-            return alight.applyBindings(child, item, {
-              skip_attr: env.skippedAttr()
-            });
+            return self.removeBlock();
           }
+        },
+        removeBlock: function() {
+          if (!self.child) {
+            return;
+          }
+          self.child.$destroy();
+          self.removeDom(self.item);
+          self.child = null;
+          return self.item = null;
+        },
+        insertBlock: function() {
+          if (self.child) {
+            return;
+          }
+          self.item = f$.clone(self.base_element);
+          self.insertDom(self.top_element, self.item);
+          self.child = scope.$new();
+          return alight.applyBindings(self.child, self.item, {
+            skip_attr: env.skippedAttr()
+          });
         },
         watchModel: function() {
           var w;
           w = scope.$watch(name, self.updateDom, {
             readOnly: true
           });
-          return init_value = !!w.value;
+          return self.init_value = w.value;
         },
         initUpdate: function() {
-          return self.updateDom(init_value);
+          return self.updateDom(self.init_value);
         },
         removeDom: function(element) {
           return f$.remove(element);
@@ -3422,9 +3404,16 @@
   dirs.ifnot = {
     priority: 700,
     init: function(element, name, scope, env) {
-      dirs = alight.directives.al["if"].init.apply(this, arguments);
-      dirs.direction = false;
-      return dirs;
+      var self;
+      self = alight.directives.al["if"].init.apply(this, arguments);
+      self.updateDom = function(value) {
+        if (value) {
+          return self.removeBlock();
+        } else {
+          return self.insertBlock();
+        }
+      };
+      return self;
     }
   };
 
@@ -3526,7 +3515,6 @@
       initValue = null;
       self = {
         owner: true,
-        topElement: null,
         start: function() {
           self.prepare();
           self.watchModel();
@@ -3675,20 +3663,11 @@
       if (!value) {
         value = '';
       }
-      return f$.attr(element, 'src', value);
+      f$.attr(element, 'src', value);
+      return '$scanNoChanges';
     };
-    r = scope.$watchText(name, setter, {
-      readOnly: true
-    });
+    r = scope.$watchText(name, setter);
     return setter(r.value);
-  };
-
-  alight.directives.bo.src = function(element, name, scope) {
-    var value;
-    value = scope.$evalText(name);
-    if (value) {
-      return f$.attr(element, 'src', value);
-    }
   };
 
   dirs.enable = function(element, exp, scope) {
@@ -3932,8 +3911,7 @@
         },
         watchModel: function() {
           return self.watch = scope.$watch(self.expression, self.updateDom, {
-            isArray: true,
-            readOnly: !self.storeTo
+            isArray: true
           });
         },
         initUpdateDom: function() {
@@ -4090,12 +4068,6 @@
             if (!list || !list.length) {
               list = [];
             }
-            if (self.storeTo) {
-              scope.$setValue(self.storeTo, list);
-              scope.$scan({
-                late: true
-              });
-            }
             last_element = self.top_element;
             dom_inserts = [];
             nodes2 = [];
@@ -4203,7 +4175,14 @@
                 skip_attr: skippedAttrs
               });
             }
-            return null;
+            if (self.storeTo) {
+              scope.$setValue(self.storeTo, list);
+              return;
+            }
+            if (scope.$system.ob) {
+              return;
+            }
+            return '$scanNoChanges';
           };
         })()
       };
@@ -4368,313 +4347,371 @@
 
 
 /*
-
-watch ob, 'foo.bar', cb
-
-ob.wtree =
-	foo:
-		$$cbs
-		bar:
-			$$cbs
-
-tree =
-	$$scope
-	$$path
-
-ensureObserve ob, key
-scope.$$observer
-	k1: tree
-	k2: tree
+    observer = alight.observer.create()
+    ob = observer.observe scope
+    observer.deliver()
+    observer.destroy()
+    
+    ob = observer.observe scope
+    ob.watch key, callback
+    ob.unwatch key, callback
+    ob.rootEvent = fn
+    ob.fire key
+    ob.reobserve key
+    ob.destroy()
  */
 
 (function() {
-  var cleanTree, ensureObserve, ensureTree, ensureTree2, fire, isObjectOrArray, self, specWords;
-
-  alight.observer = self = {};
-
-  specWords = {
-    '$system': true,
-    '$parent': true,
-    '$ns': true,
-    '$$scope': true,
-    '$$path': true,
-    '$$isArray': true,
-    '$$observer': true,
-    '$$cbs': true
-  };
-
-  isObjectOrArray = function(d) {
-    if (f$.isObject(d)) {
+  (function() {
+    var $cbs, $isArray, $node, $path, $scope, Node, Observer, __ensureTree, cleanTree, ensureObserve, ensureTree, getId, isObjectOrArray, self;
+    alight.observer = self = {};
+    self._objectObserve = Object.observe;
+    self._objectUnobserve = Object.unobserve;
+    self._arrayObserve = Array.observe;
+    self._arrayUnobserve = Array.unobserve;
+    self.support = function() {
+      if (typeof WeakMap !== 'function') {
+        return false;
+      }
+      if (typeof Object.observe !== 'function') {
+        return false;
+      }
+      if (typeof Symbol !== 'function') {
+        return false;
+      }
       return true;
+    };
+    if (!self.support()) {
+      return;
     }
-    return f$.isArray(d);
-  };
-
-  self.watch = function(ob, key, callback) {
-    var j, k, len1, ref, t;
-    t = ob.wtree;
-    ref = key.split('.');
-    for (j = 0, len1 = ref.length; j < len1; j++) {
-      k = ref[j];
-      if (!t[k]) {
-        t[k] = {
-          $$cbs: []
-        };
+    isObjectOrArray = function(d) {
+      if (f$.isObject(d)) {
+        return true;
       }
-      t = t[k];
-      t.$$cbs.push(callback);
-    }
-    ensureObserve(ob, key);
-    return callback;
-  };
-
-  ensureObserve = function(ob, key) {
-    var i, k, kList, len, path, scope, tree;
-    scope = ob.scope;
-    tree = ob.tree;
-    kList = key.split('.');
-    path = '';
-    i = 0;
-    len = kList.length;
-    while (i < len) {
-      k = kList[i++];
-      if (len === i) {
-        if (!f$.isArray(scope[k])) {
-          break;
-        }
-      } else {
-        if (!isObjectOrArray(scope[k])) {
+      return f$.isArray(d);
+    };
+    getId = (function() {
+      var i;
+      i = 0;
+      return function() {
+        i++;
+        return 'n' + i;
+      };
+    })();
+    $cbs = Symbol('callbacks');
+    $scope = Symbol('scope');
+    $path = Symbol('path');
+    $node = Symbol('node');
+    $isArray = Symbol('isArray');
+    ensureTree = function(node, key, flag) {
+      var j, k, len1, ref, wtree;
+      wtree = node.wtree;
+      ref = key.split('.');
+      for (j = 0, len1 = ref.length; j < len1; j++) {
+        k = ref[j];
+        wtree = wtree[k];
+        if (!wtree) {
           break;
         }
       }
-      if (!tree[k]) {
-        tree[k] = {};
+      if (wtree) {
+        return __ensureTree(node, wtree, key, flag);
       }
-      tree = tree[k];
-      if (path) {
-        path += '.' + k;
-      } else {
-        path = k;
+    };
+    __ensureTree = function(node, wtree, path, flag) {
+      var k, r;
+      r = false;
+      for (k in wtree) {
+        if (node.keywords[k]) {
+          continue;
+        }
+        if (__ensureTree(node, wtree[k], path + "." + k, flag)) {
+          r = true;
+        }
       }
-      scope = scope[k];
-      if (!scope.$$observer) {
-        scope.$$observer = {};
+      if (!r && wtree[$cbs].length) {
+        ensureObserve(node, path, flag);
+        return true;
       }
-      if (tree.$$scope) {
-        continue;
+      return false;
+    };
+    cleanTree = function(node, tree, checkingScope) {
+      var k, scope, scopeTree, v;
+      if (checkingScope && checkingScope !== tree[$scope]) {
+        console.error('Observe: fake scope');
       }
-      tree.$$scope = scope;
-      tree.$$path = path;
-      scope.$$observer[ob.key] = tree;
+      scope = tree[$scope];
       if (f$.isArray(scope)) {
-        tree.$$isArray = true;
-        Array.observe(scope, ob.handler);
+        tree[$isArray] = null;
+        self._arrayUnobserve(scope, node.observer.handler);
       } else {
-        Object.observe(scope, ob.handler);
+        self._objectUnobserve(scope, node.observer.handler);
       }
-    }
-    return null;
-  };
-
-  ensureTree = function(ob, key) {
-    var j, k, len1, ref, wtree;
-    wtree = ob.wtree;
-    ref = key.split('.');
-    for (j = 0, len1 = ref.length; j < len1; j++) {
-      k = ref[j];
-      wtree = wtree[k];
-      if (!wtree) {
-        break;
+      scopeTree = node.observer.treeByScope.get(scope);
+      delete scopeTree[node.id];
+      tree[$node] = null;
+      tree[$scope] = null;
+      tree[$path] = null;
+      for (k in tree) {
+        v = tree[k];
+        if (node.keywords[k]) {
+          continue;
+        }
+        if (!f$.isObject(v)) {
+          continue;
+        }
+        cleanTree(node, tree[k]);
       }
-    }
-    if (wtree) {
-      return ensureTree2(ob, wtree, key);
-    }
-  };
-
-  ensureTree2 = function(ob, wtree, path) {
-    var k, r;
-    r = false;
-    for (k in wtree) {
-      if (specWords[k]) {
-        continue;
+      return null;
+    };
+    ensureObserve = function(node, key, flag) {
+      var i, k, kList, len, path, scope, scopeTree, tree, treeByScope;
+      scope = node.scope;
+      tree = node.tree;
+      treeByScope = node.observer.treeByScope;
+      kList = key.split('.');
+      path = '';
+      i = 0;
+      len = kList.length;
+      while (i < len) {
+        k = kList[i++];
+        if (len === i) {
+          if (!f$.isArray(scope[k])) {
+            break;
+          }
+        } else {
+          if (!isObjectOrArray(scope[k])) {
+            break;
+          }
+        }
+        if (!tree[k]) {
+          tree[k] = {};
+        }
+        tree = tree[k];
+        if (path) {
+          path += '.' + k;
+        } else {
+          path = k;
+        }
+        scope = scope[k];
+        scopeTree = treeByScope.get(scope);
+        if (!scopeTree) {
+          scopeTree = {};
+          treeByScope.set(scope, scopeTree);
+        }
+        if (scopeTree[node.id]) {
+          continue;
+        }
+        if (tree[$scope]) {
+          if (flag === 'add') {
+            continue;
+          }
+          throw 'ERROR: tree has already got scope, why?';
+        }
+        tree[$node] = node;
+        tree[$path] = path;
+        tree[$scope] = scope;
+        scopeTree[node.id] = tree;
+        if (f$.isArray(scope)) {
+          tree[$isArray] = true;
+          self._arrayObserve(scope, node.observer.handler);
+        } else {
+          self._objectObserve(scope, node.observer.handler);
+        }
       }
-      if (ensureTree2(ob, wtree[k], path + "." + k)) {
-        r = true;
+      return null;
+    };
+    Node = function(observer, scope, keywords) {
+      var j, k, len1, node, scopeTree, tree;
+      if (!f$.isObject(scope)) {
+        throw 'Only objects can be observed';
       }
-    }
-    if (!r && wtree.$$cbs.length) {
-      ensureObserve(ob, path);
-      return true;
-    }
-    return false;
-  };
-
-  self.unwatch = function(ob, key, callback) {
-    var c, i, j, k, len1, ref, t;
-    t = ob.wtree;
-    ref = key.split('.');
-    for (j = 0, len1 = ref.length; j < len1; j++) {
-      k = ref[j];
-      c = t[k];
-      if (!c) {
-        continue;
+      this.id = getId();
+      this.active = true;
+      this.observer = observer;
+      this.rootEvent = null;
+      this.keywords = {};
+      if (keywords) {
+        for (j = 0, len1 = keywords.length; j < len1; j++) {
+          k = keywords[j];
+          this.keywords[k] = true;
+        }
       }
-      i = c.$$cbs.indexOf(callback);
-      if (i >= 0) {
-        c.$$cbs.splice(i, 1);
+      this.scope = scope;
+      this.wtree = {};
+      this.tree = tree = {};
+      observer.nodes.push(this);
+      node = this;
+      scopeTree = observer.treeByScope.get(scope);
+      if (!scopeTree) {
+        scopeTree = {};
+        observer.treeByScope.set(scope, scopeTree);
       }
-      t = c;
-    }
-    return null;
-  };
-
-  fire = function(wtree, key, value) {
-    var cb, j, k, l, len1, len2, ref, ref1, t;
-    t = wtree;
-    ref = key.split('.');
-    for (j = 0, len1 = ref.length; j < len1; j++) {
-      k = ref[j];
-      t = t[k] || {};
-    }
-    if (t.$$cbs) {
-      ref1 = t.$$cbs;
-      for (l = 0, len2 = ref1.length; l < len2; l++) {
-        cb = ref1[l];
-        cb(value);
+      if (scopeTree[node.id]) {
+        throw 'ERROR: scope has already observed';
       }
-    }
-    return null;
-  };
-
-  cleanTree = function(ob, tree, checkingScope) {
-    var k, scope, v;
-    if (checkingScope && checkingScope !== tree.$$scope) {
-      console.error('Observe: fake scope');
-    }
-    scope = tree.$$scope;
-    if (f$.isArray(tree.$$scope)) {
-      tree.$$isArray = null;
-      Array.unobserve(tree.$$scope, ob.handler);
-    } else {
-      Object.unobserve(tree.$$scope, ob.handler);
-    }
-    tree.$$scope.$$observer[ob.key] = null;
-    tree.$$scope = null;
-    tree.$$path = null;
-    for (k in tree) {
-      v = tree[k];
-      if (specWords[k]) {
-        continue;
+      if (tree[$scope]) {
+        throw 'ERROR: tree has already got scope, why?';
       }
-      if (!f$.isObject(v)) {
-        continue;
+      tree[$node] = node;
+      tree[$path] = '';
+      tree[$scope] = scope;
+      scopeTree[node.id] = tree;
+      self._objectObserve(scope, node.observer.handler);
+      return this;
+    };
+    Node.prototype.watch = function(key, callback) {
+      var j, k, len1, ref, t;
+      if (!this.active) {
+        throw 'Inactive observer';
       }
-      cleanTree(ob, tree[k]);
-    }
-    return null;
-  };
-
-  self.observe = function(rootScope, conf) {
-    var ob;
-    conf = conf || {};
-    ob = {
-      key: alight.utilits.getId(),
-      scope: rootScope,
-      tree: {},
-      wtree: {},
-      path: '',
-      rootEvent: conf.rootEvent,
-      active: !conf.noActive,
-      handler: function(changes) {
-        var ch, j, key, keyPath, len1, scope, tree, value;
+      t = this.wtree;
+      ref = key.split('.');
+      for (j = 0, len1 = ref.length; j < len1; j++) {
+        k = ref[j];
+        if (this.keywords[k]) {
+          return;
+        }
+        if (!t[k]) {
+          t[k] = {};
+          t[k][$cbs] = [];
+        }
+        t = t[k];
+        t[$cbs].push(callback);
+      }
+      ensureTree(this, key, 'watch');
+      return callback;
+    };
+    Node.prototype.unwatch = function(key, callback) {
+      var c, j, k, len1, ref, t;
+      t = this.wtree;
+      ref = key.split('.');
+      for (j = 0, len1 = ref.length; j < len1; j++) {
+        k = ref[j];
+        c = t[k];
+        if (!c) {
+          continue;
+        }
+        removeItem(c[$cbs], callback);
+        t = c;
+      }
+      return null;
+    };
+    Node.prototype.reobserve = function(key) {
+      if (this.tree[key]) {
+        cleanTree(this, this.tree[key]);
+      }
+      if (isObjectOrArray(this.scope[key])) {
+        return ensureTree(this, key);
+      }
+    };
+    Node.prototype.fire = function(key, value) {
+      var cb, j, k, l, len1, len2, ref, ref1, t;
+      t = this.wtree;
+      ref = key.split('.');
+      for (j = 0, len1 = ref.length; j < len1; j++) {
+        k = ref[j];
+        t = t[k] || {};
+      }
+      if (t[$cbs]) {
+        ref1 = t[$cbs];
+        for (l = 0, len2 = ref1.length; l < len2; l++) {
+          cb = ref1[l];
+          cb(value);
+        }
+      }
+      return null;
+    };
+    Node.prototype.destroy = function() {
+      if (!this.active) {
+        throw 'Inactive observer';
+      }
+      this.active = false;
+      cleanTree(this, this.tree);
+      return removeItem(this.observer.nodes, this);
+    };
+    Observer = function() {
+      var observer;
+      observer = this;
+      this.nodes = [];
+      this.treeByScope = new WeakMap();
+      this.handler = function(changes) {
+        var _, ch, j, key, keyPath, len1, node, scope, scopeTree, tree, value;
         for (j = 0, len1 = changes.length; j < len1; j++) {
           ch = changes[j];
           scope = ch.object;
-          if (!scope.$$observer) {
+          scopeTree = observer.treeByScope.get(scope);
+          if (!scopeTree) {
+            console.warn('Why we are here?');
             continue;
           }
-          tree = scope.$$observer[ob.key];
-          if (tree.$$isArray) {
-            fire(ob.wtree, tree.$$path, null);
-          } else {
-            key = ch.name;
-            if (specWords[key]) {
-              continue;
-            }
-            value = scope[key];
-            if (tree.$$path) {
-              keyPath = tree.$$path + "." + key;
+          for (_ in scopeTree) {
+            tree = scopeTree[_];
+            node = tree[$node];
+            if (tree[$isArray]) {
+              node.fire(tree[$path], null);
             } else {
-              keyPath = key;
-            }
-            if (ch.type === 'add') {
-              if (isObjectOrArray(value)) {
-                ensureTree(ob, keyPath);
+              key = ch.name;
+              if (node.keywords[key]) {
+                continue;
               }
-              fire(ob.wtree, keyPath, value);
-            } else if (ch.type === 'update') {
-              if (tree[key] && isObjectOrArray(ch.oldValue)) {
-                cleanTree(ob, tree[key], ch.oldValue);
+              value = scope[key];
+              if (tree[$path]) {
+                keyPath = tree[$path] + "." + key;
+              } else {
+                keyPath = key;
               }
-              if (isObjectOrArray(value)) {
-                ensureTree(ob, keyPath);
+              if (ch.type === 'add') {
+                if (isObjectOrArray(value)) {
+                  ensureTree(node, keyPath, 'add');
+                }
+                node.fire(keyPath, value);
+              } else if (ch.type === 'update') {
+                if (tree[key] && isObjectOrArray(ch.oldValue)) {
+                  cleanTree(node, tree[key], ch.oldValue);
+                }
+                if (isObjectOrArray(value)) {
+                  ensureTree(node, keyPath);
+                }
+                node.fire(keyPath, value);
+              } else if (ch.type === 'delete') {
+                if (isObjectOrArray(ch.oldValue)) {
+                  cleanTree(node, tree[key], ch.oldValue);
+                }
+                node.fire(keyPath, null);
               }
-              fire(ob.wtree, keyPath, null);
-            } else if (ch.type === 'delete') {
-              if (isObjectOrArray(ch.oldValue)) {
-                cleanTree(ob, tree[key], ch.oldValue);
+              if (tree === node.tree && node.rootEvent) {
+                node.rootEvent(keyPath, value);
               }
-              fire(ob.wtree, keyPath, null);
-            }
-            if (tree === ob.tree) {
-              ob.rootEvent(keyPath, value);
             }
           }
         }
         return null;
-      }
+      };
+      return this;
     };
-    (function(scope, tree) {
-      if (!scope.$$observer) {
-        scope.$$observer = {};
+    Observer.prototype.observe = function(root, options) {
+      var n;
+      options = options || {};
+      n = new Node(this, root, options.keywords);
+      return n;
+    };
+    Observer.prototype.deliver = function() {
+      return Object.deliverChangeRecords(this.handler);
+    };
+    Observer.prototype.destroy = function() {
+      var j, len1, n, ref;
+      ref = this.nodes.slice();
+      for (j = 0, len1 = ref.length; j < len1; j++) {
+        n = ref[j];
+        n.destroy();
       }
-      tree = ob.tree;
-      if (!tree.$$scope) {
-        tree.$$scope = scope;
-        tree.$$path = '';
-        scope.$$observer[ob.key] = tree;
-        return Object.observe(scope, ob.handler);
-      }
-    })(ob.scope, ob.tree);
-    return ob;
-  };
-
-  self.unobserve = function(ob) {
-    cleanTree(ob, ob.tree, ob.scope);
-    ob.scope = null;
-    ob.tree = null;
-    ob.wtree = null;
-    ob.rootEvent = null;
-    return null;
-  };
-
-  self.reobserve = function(ob, key) {
-    if (ob.tree[key]) {
-      cleanTree(ob, ob.tree[key]);
-    }
-    if (isObjectOrArray(ob.scope[key])) {
-      return ensureTree(ob, key);
-    }
-  };
-
-  self.fire = function(ob, name) {
-    return fire(ob.wtree, name, null);
-  };
-
-  self.deliver = function(ob) {
-    return Object.deliverChangeRecords(ob.handler);
-  };
+      return null;
+    };
+    return self.create = function() {
+      return new Observer();
+    };
+  })();
 
 }).call(this);
 
