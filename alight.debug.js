@@ -1374,9 +1374,9 @@ root.destroy()
 }).call(this);
 
 (function() {
-  var attrBinding, bindComment, directivePreprocessor, nodeTypeBind, process, sortByPriority, testDirective, textBinding;
+  var attrBinding, bindComment, bindElement, bindNode, bindText, directivePreprocessor, nodeTypeBind, sortByPriority, testDirective;
 
-  alight.version = '0.8.32';
+  alight.version = '0.8.34';
 
   alight.debug = {
     useObserver: false,
@@ -1392,7 +1392,7 @@ root.destroy()
 
   alight.filters = {};
 
-  alight.utilits = {};
+  alight.utilits = alight.utils = {};
 
   alight.directives = {
     al: {},
@@ -1645,7 +1645,7 @@ root.destroy()
     return setter(w.value);
   };
 
-  textBinding = function(scope, node) {
+  bindText = function(scope, node) {
     var setter, text, w;
     text = node.data;
     if (text.indexOf(alight.utilits.pars_start_tag) < 0) {
@@ -1714,7 +1714,7 @@ root.destroy()
     }
   };
 
-  process = (function() {
+  bindElement = (function() {
     var skippedAttr, takeAttr;
     takeAttr = function(name, skip) {
       var attr, len, n, ref, value;
@@ -1748,7 +1748,7 @@ root.destroy()
       return results;
     };
     return function(scope, element, config) {
-      var args, attrName, attr_value, attrs, d, directive, e, env, fn, len, len1, list, n, node, o, ref, result, skip_attr, skip_children, value;
+      var args, attrName, attr_value, attrs, d, directive, e, env, len, len1, list, n, node, o, ref, result, skip_attr, skip_children, value;
       config = config || {};
       skip_children = false;
       skip_attr = config.skip_attr || [];
@@ -1824,10 +1824,7 @@ root.destroy()
           if (!node) {
             continue;
           }
-          fn = nodeTypeBind[node.nodeType];
-          if (fn) {
-            fn(scope, node);
-          }
+          bindNode(scope, node);
         }
       }
       return null;
@@ -1835,9 +1832,20 @@ root.destroy()
   })();
 
   nodeTypeBind = {
-    1: process,
-    3: textBinding,
+    1: bindElement,
+    3: bindText,
     8: bindComment
+  };
+
+  bindNode = function(scope, node, option) {
+    var fn;
+    if (alight.utils.getData(node, 'skipBinding')) {
+      return;
+    }
+    fn = nodeTypeBind[node.nodeType];
+    if (fn) {
+      return fn(scope, node, option);
+    }
   };
 
   alight.nextTick = (function() {
@@ -1916,7 +1924,7 @@ root.destroy()
       root.finishBinding_lock = true;
     }
     config = config || {};
-    process(scope, element, config);
+    bindNode(scope, element, config);
     if (finishBinding) {
       root.finishBinding_lock = false;
       lst = root.watchers.finishBinding.slice();
@@ -2378,6 +2386,13 @@ root.destroy()
     return a === b;
   };
 
+  alight.exceptionHandler = function(e, title, locals) {
+    var err;
+    console.warn(title, locals);
+    err = typeof e === 'string' ? e : e.stack;
+    return console.error(err);
+  };
+
   alight.utilits.dataByElement = function(el, key) {
     var al;
     al = el.al;
@@ -2393,12 +2408,37 @@ root.destroy()
     return al;
   };
 
-  alight.exceptionHandler = function(e, title, locals) {
-    var err;
-    console.warn(title, locals);
-    err = typeof e === 'string' ? e : e.stack;
-    return console.error(err);
-  };
+  (function() {
+    var map;
+    if (typeof WeakMap === 'function') {
+      map = new WeakMap();
+      alight.utils.setData = function(el, key, value) {
+        var d;
+        d = map.get(el);
+        if (!d) {
+          d = {};
+          map.set(el, d);
+        }
+        return d[key] = value;
+      };
+      return alight.utils.getData = function(el, key) {
+        return (map.get(el) || {})[key];
+      };
+    } else {
+      alight.utils.setData = function(el, key, value) {
+        var d;
+        d = el.al;
+        if (!d) {
+          d = {};
+          el.al = d;
+        }
+        return d[key] = value;
+      };
+      return alight.utils.getData = function(el, key) {
+        return (el.al || {})[key];
+      };
+    }
+  })();
 
 }).call(this);
 
@@ -3868,6 +3908,7 @@ root.destroy()
 (function() {
   alight.directives.al.repeat = {
     priority: 1000,
+    restrict: 'AM',
     init: function(element, exp, scope, env) {
       var self;
       return self = {
@@ -3876,17 +3917,20 @@ root.destroy()
           self.prepare();
           self.parsExpression();
           self.prepareDom();
+          self.buildUpdateDom();
           self.watchModel();
           return self.initUpdateDom();
         },
         prepare: function() {
           var alController, controllerName;
+          self.childController = null;
+          if (element.nodeType === 8) {
+            return;
+          }
           controllerName = env.takeAttr('al-controller');
           if (controllerName) {
             alController = alight.directives.al.controller.init(null, controllerName, null);
             return self.childController = alController.callController;
-          } else {
-            return self.childController = null;
           }
         },
         parsExpression: function() {
@@ -3918,10 +3962,35 @@ root.destroy()
           return self.updateDom(self.watch.value);
         },
         prepareDom: function() {
-          self.base_element = element;
-          self.top_element = f$.createComment(" " + exp + " ");
-          f$.before(element, self.top_element);
-          return f$.remove(element);
+          var el, element_list, i, len, t, t2;
+          if (element.nodeType === 8) {
+            self.top_element = element;
+            self.element_list = element_list = [];
+            el = element.nextSibling;
+            while (el) {
+              if (el.nodeType === 8) {
+                t = el.nodeValue;
+                t2 = t.trim().split(/\s+/);
+                if (t2[0] === '/directive:' && t2[1] === 'al-repeat') {
+                  alight.utils.setData(el, 'skipBinding', true);
+                  break;
+                }
+              }
+              element_list.push(el);
+              el = el.nextSibling;
+            }
+            for (i = 0, len = element_list.length; i < len; i++) {
+              el = element_list[i];
+              f$.remove(el);
+              alight.utils.setData(el, 'skipBinding', true);
+            }
+            return null;
+          } else {
+            self.base_element = element;
+            self.top_element = f$.createComment(" " + exp + " ");
+            f$.before(element, self.top_element);
+            return f$.remove(element);
+          }
         },
         makeChild: function(item, index, list) {
           var child_scope;
@@ -3950,23 +4019,55 @@ root.destroy()
           }
           return null;
         },
-        updateDom: (function() {
-          var index, node_by_id, node_del, node_get, node_set, nodes;
-          nodes = [];
-          node_by_id = null;
-          node_set = null;
-          node_get = null;
-          node_del = null;
-          index = 0;
-          return function(list) {
-            var _getId, _id, applyList, child_scope, dom_inserts, dom_removes, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, next2, node, nodes2, pid, prev_node, skippedAttrs;
-            if (!node_get) {
-              if (self.trackExpression === '$index') {
+        buildUpdateDom: function() {
+          return self.updateDom = (function() {
+            var _getId, _id, index, node_by_id, node_del, node_get, node_set, nodes;
+            nodes = [];
+            index = 0;
+            if (self.trackExpression === '$index') {
+              node_by_id = {};
+              node_get = function(item) {
+                var $id;
+                $id = index;
+                return node_by_id[$id] || null;
+              };
+              node_del = function(node) {
+                var $id;
+                $id = node.$id;
+                if ($id) {
+                  delete node_by_id[$id];
+                }
+                return null;
+              };
+              node_set = function(item, node) {
+                var $id;
+                $id = index;
+                node.$id = $id;
+                node_by_id[$id] = node;
+                return null;
+              };
+            } else {
+              if (self.trackExpression) {
                 node_by_id = {};
+                _getId = scope.$compile(self.trackExpression, {
+                  input: ['$id', self.nameOfKey]
+                });
+                _id = function(item) {
+                  var id;
+                  id = item.$alite_id;
+                  if (id) {
+                    return id;
+                  }
+                  id = item.$alite_id = alight.utilits.getId();
+                  return id;
+                };
                 node_get = function(item) {
                   var $id;
-                  $id = index;
-                  return node_by_id[$id] || null;
+                  $id = _getId(_id, item);
+                  if ($id) {
+                    return node_by_id[$id];
+                  }
+                  return null;
                 };
                 node_del = function(node) {
                   var $id;
@@ -3978,29 +4079,30 @@ root.destroy()
                 };
                 node_set = function(item, node) {
                   var $id;
-                  $id = index;
+                  $id = _getId(_id, item);
                   node.$id = $id;
                   node_by_id[$id] = node;
                   return null;
                 };
               } else {
-                if (self.trackExpression) {
-                  node_by_id = {};
-                  _getId = scope.$compile(self.trackExpression, {
-                    input: ['$id', self.nameOfKey]
-                  });
-                  _id = function(item) {
-                    var id;
-                    id = item.$alite_id;
-                    if (id) {
-                      return id;
-                    }
-                    id = item.$alite_id = alight.utilits.getId();
-                    return id;
+                if (window.Map) {
+                  node_by_id = new Map();
+                  node_get = function(item) {
+                    return node_by_id.get(item);
                   };
+                  node_del = function(node) {
+                    node_by_id["delete"](node.item);
+                    return null;
+                  };
+                  node_set = function(item, node) {
+                    node_by_id.set(item, node);
+                    return null;
+                  };
+                } else {
+                  node_by_id = {};
                   node_get = function(item) {
                     var $id;
-                    $id = _getId(_id, item);
+                    $id = item.$alite_id;
                     if ($id) {
                       return node_by_id[$id];
                     }
@@ -4016,175 +4118,276 @@ root.destroy()
                   };
                   node_set = function(item, node) {
                     var $id;
-                    $id = _getId(_id, item);
+                    $id = alight.utilits.getId();
+                    item.$alite_id = $id;
                     node.$id = $id;
                     node_by_id[$id] = node;
                     return null;
                   };
-                } else {
-                  if (window.Map) {
-                    node_by_id = new Map();
-                    node_get = function(item) {
-                      return node_by_id.get(item);
-                    };
-                    node_del = function(node) {
-                      node_by_id["delete"](node.item);
-                      return null;
-                    };
-                    node_set = function(item, node) {
-                      node_by_id.set(item, node);
-                      return null;
-                    };
-                  } else {
-                    node_by_id = {};
-                    node_get = function(item) {
-                      var $id;
-                      $id = item.$alite_id;
-                      if ($id) {
-                        return node_by_id[$id];
-                      }
-                      return null;
-                    };
-                    node_del = function(node) {
-                      var $id;
-                      $id = node.$id;
-                      if ($id) {
-                        delete node_by_id[$id];
-                      }
-                      return null;
-                    };
-                    node_set = function(item, node) {
-                      var $id;
-                      $id = alight.utilits.getId();
-                      item.$alite_id = $id;
-                      node.$id = $id;
-                      node_by_id[$id] = node;
-                      return null;
-                    };
+                }
+              }
+            }
+            if (self.element_list) {
+              return function(list) {
+                var applyList, bel, child_scope, dom_inserts, dom_removes, el, elLast, element_list, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, len4, len5, len6, m, n, next2, node, nodes2, o, pid, prev_node, ref, ref1, skippedAttrs;
+                if (!list || !list.length) {
+                  list = [];
+                }
+                last_element = self.top_element;
+                dom_inserts = [];
+                nodes2 = [];
+                for (i = 0, len = nodes.length; i < len; i++) {
+                  node = nodes[i];
+                  node.active = false;
+                }
+                for (index = j = 0, len1 = list.length; j < len1; index = ++j) {
+                  item = list[index];
+                  node = node_get(item);
+                  if (node) {
+                    node.active = true;
                   }
                 }
-              }
-            }
-            if (!list || !list.length) {
-              list = [];
-            }
-            last_element = self.top_element;
-            dom_inserts = [];
-            nodes2 = [];
-            for (i = 0, len = nodes.length; i < len; i++) {
-              node = nodes[i];
-              node.active = false;
-            }
-            for (index = j = 0, len1 = list.length; j < len1; index = ++j) {
-              item = list[index];
-              node = node_get(item);
-              if (node) {
-                node.active = true;
-              }
-            }
-            dom_removes = (function() {
-              var k, len2, results;
-              results = [];
-              for (k = 0, len2 = nodes.length; k < len2; k++) {
-                node = nodes[k];
-                if (node.active) {
-                  continue;
+                dom_removes = [];
+                for (k = 0, len2 = nodes.length; k < len2; k++) {
+                  node = nodes[k];
+                  if (node.active) {
+                    continue;
+                  }
+                  if (node.prev) {
+                    node.prev.next = node.next;
+                  }
+                  if (node.next) {
+                    node.next.prev = node.prev;
+                  }
+                  node_del(node);
+                  node.scope.$destroy();
+                  ref = node.element_list;
+                  for (l = 0, len3 = ref.length; l < len3; l++) {
+                    el = ref[l];
+                    dom_removes.push(el);
+                  }
                 }
-                if (node.prev) {
-                  node.prev.next = node.next;
-                }
-                if (node.next) {
-                  node.next.prev = node.prev;
-                }
-                node_del(node);
-                node.scope.$destroy();
-                results.push(node.element);
-              }
-              return results;
-            })();
-            applyList = [];
-            pid = null;
-            child_scope;
-            prev_node = null;
-            for (index = k = 0, len2 = list.length; k < len2; index = ++k) {
-              item = list[index];
-              item_value = item;
-              item = item || {};
-              node = node_get(item);
-              if (node) {
-                self.updateChild(node.scope, item, index, list);
-                if (node.prev === prev_node) {
+                applyList = [];
+                pid = null;
+                child_scope;
+                prev_node = null;
+                elLast = self.element_list.length - 1;
+                for (index = m = 0, len4 = list.length; m < len4; index = ++m) {
+                  item = list[index];
+                  item_value = item;
+                  item = item || {};
+                  node = node_get(item);
+                  if (node) {
+                    self.updateChild(node.scope, item, index, list);
+                    if (node.prev === prev_node) {
+                      prev_node = node;
+                      last_element = node.element_list[elLast];
+                      node.active = true;
+                      nodes2.push(node);
+                      continue;
+                    }
+                    node.prev = prev_node;
+                    if (prev_node) {
+                      prev_node.next = node;
+                    }
+                    ref1 = node.element_list;
+                    for (n = 0, len5 = ref1.length; n < len5; n++) {
+                      el = ref1[n];
+                      dom_inserts.push({
+                        element: el,
+                        after: last_element
+                      });
+                      last_element = el;
+                    }
+                    prev_node = node;
+                    node.active = true;
+                    nodes2.push(node);
+                    continue;
+                  }
+                  child_scope = self.makeChild(item_value, index, list);
+                  element_list = (function() {
+                    var len6, o, ref2, results;
+                    ref2 = self.element_list;
+                    results = [];
+                    for (o = 0, len6 = ref2.length; o < len6; o++) {
+                      bel = ref2[o];
+                      el = f$.clone(bel);
+                      applyList.push([child_scope, el]);
+                      dom_inserts.push({
+                        element: el,
+                        after: last_element
+                      });
+                      results.push(last_element = el);
+                    }
+                    return results;
+                  })();
+                  node = {
+                    scope: child_scope,
+                    element_list: element_list,
+                    prev: prev_node,
+                    next: null,
+                    active: true,
+                    item: item
+                  };
+                  node_set(item, node);
+                  if (prev_node) {
+                    next2 = prev_node.next;
+                    prev_node.next = node;
+                    node.next = next2;
+                    if (next2) {
+                      next2.prev = node;
+                    }
+                  } else if (index === 0 && nodes[0]) {
+                    next2 = nodes[0];
+                    node.next = next2;
+                    next2.prev = node;
+                  }
                   prev_node = node;
-                  last_element = node.element;
-                  node.active = true;
                   nodes2.push(node);
-                  continue;
                 }
-                node.prev = prev_node;
-                if (prev_node) {
-                  prev_node.next = node;
+                nodes = nodes2;
+                self.rawUpdateDom(dom_removes, dom_inserts);
+                skippedAttrs = env.skippedAttr();
+                for (o = 0, len6 = applyList.length; o < len6; o++) {
+                  it = applyList[o];
+                  alight.applyBindings(it[0], it[1], {
+                    skip_attr: skippedAttrs
+                  });
                 }
-                dom_inserts.push({
-                  element: node.element,
-                  after: prev_node ? prev_node.element : self.top_element
-                });
-                last_element = node.element;
-                prev_node = node;
-                node.active = true;
-                nodes2.push(node);
-                continue;
-              }
-              child_scope = self.makeChild(item_value, index, list);
-              element = f$.clone(self.base_element);
-              applyList.push([child_scope, element]);
-              dom_inserts.push({
-                element: element,
-                after: last_element
-              });
-              node = {
-                scope: child_scope,
-                element: element,
-                prev: prev_node,
-                next: null,
-                active: true,
-                item: item
+                if (self.storeTo) {
+                  scope.$setValue(self.storeTo, list);
+                  return;
+                }
+                if (scope.$system.ob) {
+                  return;
+                }
+                return '$scanNoChanges';
               };
-              node_set(item, node);
-              if (prev_node) {
-                next2 = prev_node.next;
-                prev_node.next = node;
-                node.next = next2;
-                if (next2) {
-                  next2.prev = node;
+            } else {
+              return function(list) {
+                var applyList, child_scope, dom_inserts, dom_removes, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, next2, node, nodes2, pid, prev_node, skippedAttrs;
+                if (!list || !list.length) {
+                  list = [];
                 }
-              } else if (index === 0 && nodes[0]) {
-                next2 = nodes[0];
-                node.next = next2;
-                next2.prev = node;
-              }
-              prev_node = node;
-              last_element = element;
-              nodes2.push(node);
+                last_element = self.top_element;
+                dom_inserts = [];
+                nodes2 = [];
+                for (i = 0, len = nodes.length; i < len; i++) {
+                  node = nodes[i];
+                  node.active = false;
+                }
+                for (index = j = 0, len1 = list.length; j < len1; index = ++j) {
+                  item = list[index];
+                  node = node_get(item);
+                  if (node) {
+                    node.active = true;
+                  }
+                }
+                dom_removes = (function() {
+                  var k, len2, results;
+                  results = [];
+                  for (k = 0, len2 = nodes.length; k < len2; k++) {
+                    node = nodes[k];
+                    if (node.active) {
+                      continue;
+                    }
+                    if (node.prev) {
+                      node.prev.next = node.next;
+                    }
+                    if (node.next) {
+                      node.next.prev = node.prev;
+                    }
+                    node_del(node);
+                    node.scope.$destroy();
+                    results.push(node.element);
+                  }
+                  return results;
+                })();
+                applyList = [];
+                pid = null;
+                child_scope;
+                prev_node = null;
+                for (index = k = 0, len2 = list.length; k < len2; index = ++k) {
+                  item = list[index];
+                  item_value = item;
+                  item = item || {};
+                  node = node_get(item);
+                  if (node) {
+                    self.updateChild(node.scope, item, index, list);
+                    if (node.prev === prev_node) {
+                      prev_node = node;
+                      last_element = node.element;
+                      node.active = true;
+                      nodes2.push(node);
+                      continue;
+                    }
+                    node.prev = prev_node;
+                    if (prev_node) {
+                      prev_node.next = node;
+                    }
+                    dom_inserts.push({
+                      element: node.element,
+                      after: prev_node ? prev_node.element : self.top_element
+                    });
+                    last_element = node.element;
+                    prev_node = node;
+                    node.active = true;
+                    nodes2.push(node);
+                    continue;
+                  }
+                  child_scope = self.makeChild(item_value, index, list);
+                  element = f$.clone(self.base_element);
+                  applyList.push([child_scope, element]);
+                  dom_inserts.push({
+                    element: element,
+                    after: last_element
+                  });
+                  node = {
+                    scope: child_scope,
+                    element: element,
+                    prev: prev_node,
+                    next: null,
+                    active: true,
+                    item: item
+                  };
+                  last_element = element;
+                  node_set(item, node);
+                  if (prev_node) {
+                    next2 = prev_node.next;
+                    prev_node.next = node;
+                    node.next = next2;
+                    if (next2) {
+                      next2.prev = node;
+                    }
+                  } else if (index === 0 && nodes[0]) {
+                    next2 = nodes[0];
+                    node.next = next2;
+                    next2.prev = node;
+                  }
+                  prev_node = node;
+                  nodes2.push(node);
+                }
+                nodes = nodes2;
+                self.rawUpdateDom(dom_removes, dom_inserts);
+                skippedAttrs = env.skippedAttr();
+                for (l = 0, len3 = applyList.length; l < len3; l++) {
+                  it = applyList[l];
+                  alight.applyBindings(it[0], it[1], {
+                    skip_attr: skippedAttrs
+                  });
+                }
+                if (self.storeTo) {
+                  scope.$setValue(self.storeTo, list);
+                  return;
+                }
+                if (scope.$system.ob) {
+                  return;
+                }
+                return '$scanNoChanges';
+              };
             }
-            nodes = nodes2;
-            self.rawUpdateDom(dom_removes, dom_inserts);
-            skippedAttrs = env.skippedAttr();
-            for (l = 0, len3 = applyList.length; l < len3; l++) {
-              it = applyList[l];
-              alight.applyBindings(it[0], it[1], {
-                skip_attr: skippedAttrs
-              });
-            }
-            if (self.storeTo) {
-              scope.$setValue(self.storeTo, list);
-              return;
-            }
-            if (scope.$system.ob) {
-              return;
-            }
-            return '$scanNoChanges';
-          };
-        })()
+          })();
+        }
       };
     }
   };
@@ -4198,6 +4401,7 @@ root.destroy()
         self.prepare();
         self.parsExpression();
         self.prepareDom();
+        self.buildUpdateDom();
         self.watch = {
           value: scope.$eval(self.expression)
         };
