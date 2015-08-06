@@ -2,9 +2,26 @@
     function buildAlight(alightConfig) {
         alightConfig = alightConfig || {};
         var enableGlobalControllers = alightConfig.globalControllers;
-        var alight = {};
+        var alight = {
+            core: {},
+            controllers: {},
+            filters: {},
+            text: {},
+            apps: {},
+            utils: {},
+            directives: {
+                al: {},
+                bo: {},
+                ctrl: {}
+            },
+            hooks: {
+                directive: [],
+                binding: []
+            }
+        };
         var f$ = {};
         alight.f$ = f$;
+        alight.utilits = alight.utils;
 
 
         var removeItem = function(list, item) {
@@ -311,7 +328,7 @@
     // ready
     if(msie && msie < 9) {
         f$.ready = function(callback) {
-            $(callback);
+            $(function() {callback()});
         }
     } else {
         f$.ready = (function() {
@@ -428,8 +445,18 @@
         f$.blur = function(element) {
             element.blur()
         }
-    }
+    };
 
+    if(msie && msie < 9) {
+        f$.isElement = function(el) {
+            return (typeof el==="object") && (el.nodeType===1) &&
+                    (typeof el.style === "object") && (typeof el.ownerDocument ==="object");
+        };
+    } else {
+        f$.isElement = function(el) {
+            return el instanceof HTMLElement
+        };
+    };
 
     // append classes
     (function(){
@@ -489,7 +516,7 @@ root.destroy()
 (function() {
   var Node, Root, WA, get_time, notEqual, scan_core2, self, watchAny;
 
-  alight.core = self = {};
+  self = alight.core;
 
   self.root = function(conf) {
     conf = conf || {};
@@ -1376,7 +1403,7 @@ root.destroy()
 (function() {
   var attrBinding, bindComment, bindElement, bindNode, bindText, directivePreprocessor, nodeTypeBind, sortByPriority, testDirective;
 
-  alight.version = '0.8.34';
+  alight.version = '0.8.39';
 
   alight.debug = {
     useObserver: false,
@@ -1387,22 +1414,6 @@ root.destroy()
     watchText: false,
     parser: false
   };
-
-  alight.controllers = {};
-
-  alight.filters = {};
-
-  alight.utilits = alight.utils = {};
-
-  alight.directives = {
-    al: {},
-    bo: {},
-    ctrl: {}
-  };
-
-  alight.text = {};
-
-  alight.apps = {};
 
   alight.directivePreprocessor = directivePreprocessor = function(attrName, args) {
     var dir, j, k, name, ns, path, raw, v;
@@ -1479,7 +1490,7 @@ root.destroy()
         directive: dir,
         result: {},
         isDeferred: false,
-        procLine: directivePreprocessor.ext,
+        procLine: alight.hooks.directive,
         makeDeferred: function() {
           dscope.isDeferred = true;
           dscope.result.owner = true;
@@ -1498,7 +1509,7 @@ root.destroy()
 
   (function() {
     var ext;
-    directivePreprocessor.ext = ext = [];
+    directivePreprocessor.ext = ext = alight.hooks.directive;
     ext.push({
       code: 'init',
       fn: function() {
@@ -1838,9 +1849,19 @@ root.destroy()
   };
 
   bindNode = function(scope, node, option) {
-    var fn;
+    var fn, h, len, n, r, ref;
     if (alight.utils.getData(node, 'skipBinding')) {
       return;
+    }
+    if (alight.hooks.binding.length) {
+      ref = alight.hooks.binding;
+      for (n = 0, len = ref.length; n < len; n++) {
+        h = ref[n];
+        r = h.fn(scope, node, option);
+        if (r && r.owner) {
+          return;
+        }
+      }
     }
     fn = nodeTypeBind[node.nodeType];
     if (fn) {
@@ -1942,7 +1963,7 @@ root.destroy()
     if (!input) {
       input = f$.find(document, '[al-app]');
     }
-    if (input instanceof HTMLElement) {
+    if (f$.isElement(input)) {
       input = [input];
     }
     if (f$.isArray(input) || typeof input.length === 'number') {
@@ -1987,7 +2008,7 @@ root.destroy()
         scope = alight.Scope({
           prototype: input
         });
-        if (input.$el instanceof HTMLElement) {
+        if (f$.isElement(input.$el)) {
           alight.applyBindings(scope, input.$el);
         } else {
           ref = f$.find(document.body, input.$el);
@@ -2519,6 +2540,16 @@ root.destroy()
         }
         if (a === '=') {
           if (ap !== '=' && an !== '=') {
+            variable_assignment[variable_assignment.length - 1] = true;
+          }
+        }
+        if (a === '+') {
+          if (an === '+' || an === '=') {
+            variable_assignment[variable_assignment.length - 1] = true;
+          }
+        }
+        if (a === '-') {
+          if (an === '-' || an === '=') {
             variable_assignment[variable_assignment.length - 1] = true;
           }
         }
@@ -4129,7 +4160,7 @@ root.destroy()
             }
             if (self.element_list) {
               return function(list) {
-                var applyList, bel, child_scope, dom_inserts, dom_removes, el, elLast, element_list, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, len4, len5, len6, m, n, next2, node, nodes2, o, pid, prev_node, ref, ref1, skippedAttrs;
+                var applyList, bel, child_scope, dom_inserts, dom_removes, el, elLast, element_list, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, len4, len5, len6, len7, m, n, next2, node, nodes2, o, p, pid, prev_moved, prev_node, ref, ref1, ref2, skippedAttrs;
                 if (!list || !list.length) {
                   list = [];
                 }
@@ -4171,6 +4202,7 @@ root.destroy()
                 pid = null;
                 child_scope;
                 prev_node = null;
+                prev_moved = false;
                 elLast = self.element_list.length - 1;
                 for (index = m = 0, len4 = list.length; m < len4; index = ++m) {
                   item = list[index];
@@ -4180,6 +4212,17 @@ root.destroy()
                   if (node) {
                     self.updateChild(node.scope, item, index, list);
                     if (node.prev === prev_node) {
+                      if (prev_moved) {
+                        ref1 = node.element_list;
+                        for (n = 0, len5 = ref1.length; n < len5; n++) {
+                          el = ref1[n];
+                          dom_inserts.push({
+                            element: el,
+                            after: last_element
+                          });
+                          last_element = el;
+                        }
+                      }
                       prev_node = node;
                       last_element = node.element_list[elLast];
                       node.active = true;
@@ -4190,15 +4233,16 @@ root.destroy()
                     if (prev_node) {
                       prev_node.next = node;
                     }
-                    ref1 = node.element_list;
-                    for (n = 0, len5 = ref1.length; n < len5; n++) {
-                      el = ref1[n];
+                    ref2 = node.element_list;
+                    for (o = 0, len6 = ref2.length; o < len6; o++) {
+                      el = ref2[o];
                       dom_inserts.push({
                         element: el,
                         after: last_element
                       });
                       last_element = el;
                     }
+                    prev_moved = true;
                     prev_node = node;
                     node.active = true;
                     nodes2.push(node);
@@ -4206,11 +4250,11 @@ root.destroy()
                   }
                   child_scope = self.makeChild(item_value, index, list);
                   element_list = (function() {
-                    var len6, o, ref2, results;
-                    ref2 = self.element_list;
+                    var len7, p, ref3, results;
+                    ref3 = self.element_list;
                     results = [];
-                    for (o = 0, len6 = ref2.length; o < len6; o++) {
-                      bel = ref2[o];
+                    for (p = 0, len7 = ref3.length; p < len7; p++) {
+                      bel = ref3[p];
                       el = f$.clone(bel);
                       applyList.push([child_scope, el]);
                       dom_inserts.push({
@@ -4248,8 +4292,8 @@ root.destroy()
                 nodes = nodes2;
                 self.rawUpdateDom(dom_removes, dom_inserts);
                 skippedAttrs = env.skippedAttr();
-                for (o = 0, len6 = applyList.length; o < len6; o++) {
-                  it = applyList[o];
+                for (p = 0, len7 = applyList.length; p < len7; p++) {
+                  it = applyList[p];
                   alight.applyBindings(it[0], it[1], {
                     skip_attr: skippedAttrs
                   });
@@ -4265,7 +4309,7 @@ root.destroy()
               };
             } else {
               return function(list) {
-                var applyList, child_scope, dom_inserts, dom_removes, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, next2, node, nodes2, pid, prev_node, skippedAttrs;
+                var applyList, child_scope, dom_inserts, dom_removes, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, next2, node, nodes2, pid, prev_moved, prev_node, skippedAttrs;
                 if (!list || !list.length) {
                   list = [];
                 }
@@ -4307,6 +4351,7 @@ root.destroy()
                 pid = null;
                 child_scope;
                 prev_node = null;
+                prev_moved = false;
                 for (index = k = 0, len2 = list.length; k < len2; index = ++k) {
                   item = list[index];
                   item_value = item;
@@ -4315,6 +4360,12 @@ root.destroy()
                   if (node) {
                     self.updateChild(node.scope, item, index, list);
                     if (node.prev === prev_node) {
+                      if (prev_moved) {
+                        dom_inserts.push({
+                          element: node.element,
+                          after: prev_node.element
+                        });
+                      }
                       prev_node = node;
                       last_element = node.element;
                       node.active = true;
@@ -4327,8 +4378,9 @@ root.destroy()
                     }
                     dom_inserts.push({
                       element: node.element,
-                      after: prev_node ? prev_node.element : self.top_element
+                      after: last_element
                     });
+                    prev_moved = true;
                     last_element = node.element;
                     prev_node = node;
                     node.active = true;
