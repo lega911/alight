@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.10.9
+ * Angular Light 0.10.10
  * (c) 2015 Oleg Nechaev
  * Released under the MIT License.
- * 2015-10-20, http://angularlight.org/ 
+ * 2015-10-30, http://angularlight.org/ 
  */(function() {
     function buildAlight(alightConfig) {
         alightConfig = alightConfig || {};
@@ -919,7 +919,6 @@ notEqual = function(a, b) {
 scan_core2 = function(root, result) {
   var a0, a1, callback, changes, extraLoop, extraLoopFlag, j, l, last, len, len1, mutated, node, ref, ref1, scope, total, value, w;
   extraLoop = false;
-  extraLoopFlag = false;
   changes = 0;
   total = 0;
   node = root.nodeHead;
@@ -964,6 +963,7 @@ scan_core2 = function(root, result) {
         if (mutated) {
           mutated = false;
           changes++;
+          extraLoopFlag = false;
           ref1 = w.callbacks.slice();
           for (l = 0, len1 = ref1.length; l < len1; l++) {
             callback = ref1[l];
@@ -1102,10 +1102,7 @@ Scope = function(conf) {
         }
       }
     }
-  } else {
-    scope = new Scope();
-  }
-  if (conf.parent) {
+  } else if (conf.parent) {
     if (conf.root) {
       throw 'Conflict new Scope, root and parent together';
     }
@@ -1117,6 +1114,8 @@ Scope = function(conf) {
     scope = new parent.$system.exChildConstructor;
     root = parent.$system.root;
     isRoot = false;
+  } else {
+    scope = new Scope();
   }
   if (conf.root) {
     root = conf.root;
@@ -1268,7 +1267,7 @@ Scope.prototype.$scan = function(option) {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, directivePreprocessor, nodeTypeBind, sortByPriority, testDirective;
 
-alight.version = '0.10.9';
+alight.version = '0.10.10';
 
 alight.debug = {
   scan: 0,
