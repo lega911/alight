@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.10.10
+ * Angular Light 0.10.11
  * (c) 2015 Oleg Nechaev
  * Released under the MIT License.
- * 2015-10-30, http://angularlight.org/ 
+ * 2015-11-18, http://angularlight.org/ 
  */(function() {
     function buildAlight(alightConfig) {
         alightConfig = alightConfig || {};
@@ -1267,7 +1267,7 @@ Scope.prototype.$scan = function(option) {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, directivePreprocessor, nodeTypeBind, sortByPriority, testDirective;
 
-alight.version = '0.10.10';
+alight.version = '0.10.11';
 
 alight.debug = {
   scan: 0,
@@ -3005,7 +3005,8 @@ clickMaker = function(event) {
       return self = {
         stopPropagation: this.stopPropagation,
         callback: scope.$compile(name, {
-          no_return: true
+          no_return: true,
+          input: ['$event']
         }),
         start: function() {
           self.onDom();
@@ -3029,7 +3030,7 @@ clickMaker = function(event) {
             return;
           }
           try {
-            self.callback(scope);
+            self.callback(scope, e);
           } catch (_error) {
             e = _error;
             alight.exceptionHandler(e, 'al-click, error in expression: ' + name, {
@@ -3604,7 +3605,8 @@ alight.d.al.submit = function(element, name, scope) {
   var self;
   return self = {
     callback: scope.$compile(name, {
-      no_return: true
+      no_return: true,
+      input: ['$event']
     }),
     start: function() {
       return self.onDom();
@@ -3620,7 +3622,7 @@ alight.d.al.submit = function(element, name, scope) {
       e.preventDefault();
       e.stopPropagation();
       try {
-        self.callback(scope);
+        self.callback(scope, e);
       } catch (_error) {
         e = _error;
         alight.exceptionHandler(e, 'al-submit, error in expression: ' + name, {
