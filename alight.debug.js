@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.11.8
+ * Angular Light 0.11.9
  * (c) 2015 Oleg Nechaev
  * Released under the MIT License.
- * 2015-11-28, http://angularlight.org/ 
+ * 2015-11-29, http://angularlight.org/ 
  */(function() {
     function buildAlight() {
         var alight = {
@@ -1346,7 +1346,7 @@ alight.text.oneTimeBinding = function(callback, expression, cd, env) {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.11.8';
+alight.version = '0.11.9';
 
 alight.debug = {
   scan: 0,
@@ -2976,11 +2976,10 @@ alight.d.al["if"] = {
       },
       updateDom: function(value) {
         if (value) {
-          self.insertBlock(value);
+          return self.insertBlock(value);
         } else {
-          self.removeBlock();
+          return self.removeBlock();
         }
-        return '$scanNoChanges';
       },
       removeBlock: function() {
         if (!self.child) {
@@ -3023,11 +3022,10 @@ alight.d.al.ifnot = {
     self = alight.d.al["if"].link(scope, cd, element, name, env);
     self.updateDom = function(value) {
       if (value) {
-        self.removeBlock();
+        return self.removeBlock();
       } else {
-        self.insertBlock();
+        return self.insertBlock();
       }
-      return '$scanNoChanges';
     };
     return self;
   }
@@ -3827,9 +3825,9 @@ alight.d.al.include = {
       updateDom: function(url) {
         if (!url) {
           self.removeBlock();
-          return '$scanNoChanges';
+          return;
         }
-        self.loadHtml({
+        return self.loadHtml({
           cache: true,
           url: url,
           success: function(html) {
@@ -3838,7 +3836,6 @@ alight.d.al.include = {
           },
           error: self.removeBlock
         });
-        return '$scanNoChanges';
       },
       removeDom: function(element) {
         return f$.remove(element);
@@ -4043,9 +4040,7 @@ alight.d.al.html = {
         skip_attr: env.skippedAttr()
       });
     };
-    cd.watch(name, setter, {
-      readOnly: true
-    });
+    cd.watch(name, setter);
     return null;
   }
 };
