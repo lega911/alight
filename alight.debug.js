@@ -1,5 +1,5 @@
 /**
- * Angular Light 0.12.0
+ * Angular Light 0.12.1
  * (c) 2015 Oleg Nechaev
  * Released under the MIT License.
  * 2015-12-22, http://angularlight.org/ 
@@ -1196,7 +1196,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.0';
+alight.version = '0.12.1';
 
 alight.debug = {
   scan: 0,
@@ -3879,7 +3879,7 @@ alight.d.al.html = {
   stopBinding: true,
   link: function(scope, element, name, env) {
     var cd, child, setter;
-    cd = scope.$childDetector;
+    cd = env.changeDetector;
     child = null;
     setter = function(html) {
       if (child) {
@@ -4096,36 +4096,45 @@ alight.d.al.style = function(scope, element, name) {
       return this.itemById[id] || null;
     };
   }
-  alight.d.al.select = {
-    ChangeDetector: true,
-    link: function(scope, element, key, env) {
-      var cd, mapper, onChangeDOM, watch;
-      cd = env.changeDetector;
-      cd.$select = mapper = new Mapper;
-      watch = null;
-      cd.watch('$finishBinding', function() {
-        watch = cd.watch(key, function(value) {
-          return element.value = mapper.getId(value);
-        });
-        return cd.scan();
+  alight.d.al.select = function(scope, element, key, env) {
+    var cd, mapper, onChangeDOM, watch;
+    cd = env.changeDetector["new"]();
+    env.stopBinding = true;
+    cd.$select = mapper = new Mapper;
+    watch = null;
+    cd.watch('$finishBinding', function() {
+      watch = cd.watch(key, function(value) {
+        var id;
+        id = mapper.getId(value);
+        if (id) {
+          return element.value = id;
+        } else {
+          return element.selectedIndex = -1;
+        }
       });
-      onChangeDOM = function(event) {
-        var item;
-        item = mapper.getItem(event.target.value);
-        cd.setValue(key, item);
-        return cd.scan({
-          skipWatch: watch
-        });
-      };
-      f$.on(element, 'input', onChangeDOM);
-      cd.watch('$destroy', function() {
-        return f$.off(element, 'input', onChangeDOM);
+      return cd.scan();
+    });
+    onChangeDOM = function(event) {
+      var item;
+      item = mapper.getItem(event.target.value);
+      cd.setValue(key, item);
+      return cd.scan({
+        skipWatch: watch
       });
-    }
+    };
+    f$.on(element, 'input', onChangeDOM);
+    f$.on(element, 'change', onChangeDOM);
+    cd.watch('$destroy', function() {
+      f$.off(element, 'input', onChangeDOM);
+      return f$.off(element, 'change', onChangeDOM);
+    });
+    return alight.bind(cd, element, {
+      skip_attr: env.skippedAttr()
+    });
   };
   return alight.d.al.option = function(scope, element, key, env) {
-    var i, id, j, mapper, step;
-    step = env.changeDetector;
+    var cd, i, id, j, mapper, step;
+    cd = step = env.changeDetector;
     for (i = j = 0; j <= 4; i = ++j) {
       mapper = step.$select;
       if (mapper) {
