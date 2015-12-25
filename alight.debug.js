@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.1
+ * Angular Light 0.12.3
  * (c) 2015 Oleg Nechaev
  * Released under the MIT License.
- * 2015-12-22, http://angularlight.org/ 
+ * 2015-12-25, http://angularlight.org/ 
  */(function() {
     function buildAlight() {
         var alight = {
@@ -229,7 +229,6 @@ makeSkipWatchObject = function() {
 };
 
 Root = function() {
-  this.cdLine = [];
   this.watchers = {
     any: [],
     finishBinding: [],
@@ -264,7 +263,6 @@ ChangeDetector = function(root, scope) {
   this.destroy_callbacks = [];
   this.parent = null;
   this.children = [];
-  root.cdLine.push(this);
   this.rwatchers = {
     any: [],
     finishScan: []
@@ -286,7 +284,6 @@ ChangeDetector.prototype.destroy = function() {
   cd = this;
   root = cd.root;
   cd.scope = null;
-  removeItem(root.cdLine, cd);
   if (cd.parent) {
     removeItem(cd.parent.children, cd);
   }
@@ -616,19 +613,24 @@ execWatchObject = function(scope, w, value) {
   }
 };
 
-scanCore = function(root, result) {
-  var a0, a1, cd, changes, extraLoop, j, k, last, len, len1, mutated, ref, ref1, scope, total, value, w;
+scanCore = function(topCD, result) {
+  var a0, a1, cd, changes, extraLoop, index, j, last, len, mutated, queue, ref, root, scope, total, value, w;
+  root = topCD.root;
   extraLoop = false;
   changes = 0;
   total = 0;
-  ref = root.cdLine.slice();
-  for (j = 0, len = ref.length; j < len; j++) {
-    cd = ref[j];
+  if (!topCD) {
+    return;
+  }
+  queue = [];
+  index = 0;
+  cd = topCD;
+  while (cd) {
     scope = cd.scope;
     total += cd.watchList.length;
-    ref1 = cd.watchList.slice();
-    for (k = 0, len1 = ref1.length; k < len1; k++) {
-      w = ref1[k];
+    ref = cd.watchList.slice();
+    for (j = 0, len = ref.length; j < len; j++) {
+      w = ref[j];
       result.src = w.src;
       last = w.value;
       value = w.exp(scope);
@@ -643,13 +645,16 @@ scanCore = function(root, result) {
                 mutated = true;
                 w.value = value.slice();
               }
+            } else {
+              mutated = true;
+              w.value = value;
             }
           } else {
             mutated = true;
             if (a1) {
               w.value = value.slice();
             } else {
-              w.value = null;
+              w.value = value;
             }
           }
         } else if (w.deep) {
@@ -688,15 +693,62 @@ scanCore = function(root, result) {
         }
       }
     }
+    queue.push.apply(queue, cd.children);
+    cd = queue[index++];
   }
   result.total = total;
   result.changes = changes;
   result.extraLoop = extraLoop;
 };
 
-Root.prototype.scan = function(cfg) {
-  var callback, cb, duration, e, finishScanOnce, j, k, l, len, len1, len2, len3, m, mainLoop, onScanOnce, ref, ref1, result, root, start;
-  root = this;
+ChangeDetector.prototype.digest = function() {
+  var callback, duration, e, j, len, mainLoop, onScanOnce, result, root, totalChanges;
+  root = this.root;
+  mainLoop = 10;
+  totalChanges = 0;
+  try {
+    result = {
+      total: 0,
+      changes: 0,
+      extraLoop: false,
+      src: ''
+    };
+    while (mainLoop) {
+      mainLoop--;
+      root.extraLoop = false;
+      if (root.watchers.onScanOnce.length) {
+        onScanOnce = root.watchers.onScanOnce.slice();
+        root.watchers.onScanOnce.length = 0;
+        for (j = 0, len = onScanOnce.length; j < len; j++) {
+          callback = onScanOnce[j];
+          callback.call(root);
+        }
+      }
+      scanCore(this, result);
+      totalChanges += result.changes;
+      if (!result.extraLoop && !root.extraLoop) {
+        break;
+      }
+    }
+    if (alight.debug.scan) {
+      duration = get_time() - start;
+      console.log("$scan: loops: (" + (10 - mainLoop) + "), last-loop changes: " + result.changes + ", watches: " + result.total + " / " + duration + "ms");
+    }
+  } catch (_error) {
+    e = _error;
+    alight.exceptionHandler(e, '$scan, error in expression: ' + result.src, {
+      src: result.src,
+      result: result
+    });
+  }
+  result.mainLoop = mainLoop;
+  result.totalChanges = totalChanges;
+  return result;
+};
+
+ChangeDetector.prototype.scan = function(cfg) {
+  var callback, cb, finishScanOnce, j, k, l, len, len1, len2, ref, ref1, result, root, start;
+  root = this.root;
   cfg = cfg || {};
   if (f$.isFunction(cfg)) {
     cfg = {
@@ -716,7 +768,7 @@ Root.prototype.scan = function(cfg) {
     root.lateScan = true;
     alight.nextTick(function() {
       if (root.lateScan) {
-        return root.scan();
+        return root.topCD.scan();
       }
     });
     return;
@@ -730,63 +782,32 @@ Root.prototype.scan = function(cfg) {
   if (alight.debug.scan) {
     start = get_time();
   }
-  mainLoop = 10;
-  try {
-    result = {
-      total: 0,
-      changes: 0,
-      extraLoop: false,
-      src: ''
-    };
-    while (mainLoop) {
-      mainLoop--;
-      root.extraLoop = false;
-      if (root.watchers.onScanOnce.length) {
-        onScanOnce = root.watchers.onScanOnce.slice();
-        root.watchers.onScanOnce.length = 0;
-        for (j = 0, len = onScanOnce.length; j < len; j++) {
-          callback = onScanOnce[j];
-          callback.call(root);
-        }
-      }
-      scanCore(root, result);
-      if (result.changes) {
-        ref = root.watchers.any;
-        for (k = 0, len1 = ref.length; k < len1; k++) {
-          cb = ref[k];
-          cb();
-        }
-      }
-      if (!result.extraLoop && !root.extraLoop) {
-        break;
-      }
-    }
-    if (alight.debug.scan) {
-      duration = get_time() - start;
-      console.log("$scan: loops: (" + (10 - mainLoop) + "), last-loop changes: " + result.changes + ", watches: " + result.total + " / " + duration + "ms");
-    }
-  } catch (_error) {
-    e = _error;
-    alight.exceptionHandler(e, '$scan, error in expression: ' + result.src, {
-      src: result.src,
-      result: result
-    });
-  } finally {
-    root.status = null;
-    root.skippedWatches.clear();
-    ref1 = root.watchers.finishScan;
-    for (l = 0, len2 = ref1.length; l < len2; l++) {
-      callback = ref1[l];
-      callback();
-    }
-    finishScanOnce = root.watchers.finishScanOnce.slice();
-    root.watchers.finishScanOnce.length = 0;
-    for (m = 0, len3 = finishScanOnce.length; m < len3; m++) {
-      callback = finishScanOnce[m];
-      callback.call(root);
+  if (root.topCD) {
+    result = root.topCD.digest();
+  } else {
+    result = {};
+  }
+  if (result.totalChanges) {
+    ref = root.watchers.any;
+    for (j = 0, len = ref.length; j < len; j++) {
+      cb = ref[j];
+      cb();
     }
   }
-  if (mainLoop === 0) {
+  root.status = null;
+  root.skippedWatches.clear();
+  ref1 = root.watchers.finishScan;
+  for (k = 0, len1 = ref1.length; k < len1; k++) {
+    callback = ref1[k];
+    callback();
+  }
+  finishScanOnce = root.watchers.finishScanOnce.slice();
+  root.watchers.finishScanOnce.length = 0;
+  for (l = 0, len2 = finishScanOnce.length; l < len2; l++) {
+    callback = finishScanOnce[l];
+    callback.call(root);
+  }
+  if (result.mainLoop === 0) {
     throw 'Infinity loop detected';
   }
   return result;
@@ -796,10 +817,6 @@ alight.core.ChangeDetector = ChangeDetector;
 
 ChangeDetector.prototype.compile = function(expression, option) {
   return alight.utils.compile.expression(expression, option).fn;
-};
-
-ChangeDetector.prototype.scan = function(option) {
-  return this.root.scan(option);
 };
 
 ChangeDetector.prototype.setValue = function(name, value) {
@@ -1196,7 +1213,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.1';
+alight.version = '0.12.3';
 
 alight.debug = {
   scan: 0,
@@ -1841,8 +1858,8 @@ alight.bind = alight.applyBindings = function(scope, element, option) {
   root.bindingResult.text += result.text;
   root.bindingResult.attr += result.attr;
   root.bindingResult.hook += result.hook;
+  cd.digest();
   if (finishBinding) {
-    cd.scan();
     root.finishBinding_lock = false;
     lst = root.watchers.finishBinding.slice();
     root.watchers.finishBinding.length = 0;
@@ -2068,9 +2085,10 @@ alight.utils.parsExpression = function(line, cfg) {
   simpleVariables = [];
   isSimple = !input.length;
   pars = function(lvl, stop, convert, is_string) {
-    var a, an, ap, check_variabe, var_before, variable, variable_index;
+    var a, an, ap, assignIndex, check_variabe, var_before, variable, variable_index;
     variable = '';
     variable_index = -1;
+    assignIndex = null;
     var_before = false;
     check_variabe = function() {
       var var_main;
@@ -2112,6 +2130,9 @@ alight.utils.parsExpression = function(line, cfg) {
           }
           if (check_variabe()) {
             var_before = index;
+            if (a === '[') {
+              assignIndex = variable_assignment.length;
+            }
           }
           variable = '';
         }
@@ -2126,17 +2147,32 @@ alight.utils.parsExpression = function(line, cfg) {
       }
       if (a === '=') {
         if ((!(ap === '=' || an === '=')) && (ap !== '<') && (ap !== '>')) {
-          variable_assignment[variable_assignment.length - 1] = true;
+          if (assignIndex) {
+            variable_assignment[assignIndex - 1] = 2;
+            assignIndex = null;
+          } else {
+            variable_assignment[variable_assignment.length - 1] = true;
+          }
         }
       }
       if (a === '+') {
         if (an === '+' || an === '=') {
-          variable_assignment[variable_assignment.length - 1] = true;
+          if (assignIndex) {
+            variable_assignment[assignIndex - 1] = 2;
+            assignIndex = null;
+          } else {
+            variable_assignment[variable_assignment.length - 1] = true;
+          }
         }
       }
       if (a === '-') {
         if (an === '-' || an === '=') {
-          variable_assignment[variable_assignment.length - 1] = true;
+          if (assignIndex) {
+            variable_assignment[assignIndex - 1] = 2;
+            assignIndex = null;
+          } else {
+            variable_assignment[variable_assignment.length - 1] = true;
+          }
         }
       }
       if (a === '(' && !is_string) {
@@ -2228,7 +2264,7 @@ alight.utils.parsExpression = function(line, cfg) {
         } else if (d[0] === 'this') {
           newName = '$$scope.' + d.slice(1).join('.');
         } else {
-          if (assignment && d.length === 1) {
+          if (assignment === true && d.length === 1) {
             newName = '($$scope.$root || $$scope).' + variable;
           } else {
             newName = '$$scope.' + variable;
@@ -3050,7 +3086,7 @@ alight.directives.al.repeat = {
       },
       buildUpdateDom: function() {
         return self.updateDom = (function() {
-          var _getId, _id, fastBinding, index, node_by_id, node_del, node_get, node_set, nodes;
+          var _getId, _id, fastBinding, generator, getResultList, index, node_by_id, node_del, node_get, node_set, nodes;
           nodes = [];
           index = 0;
           fastBinding = false;
@@ -3126,35 +3162,71 @@ alight.directives.al.repeat = {
                 node_by_id = {};
                 node_get = function(item) {
                   var $id;
-                  $id = item.$alite_id;
-                  if ($id) {
-                    return node_by_id[$id];
+                  if (typeof item === 'object') {
+                    $id = item.$alite_id;
+                    if ($id) {
+                      return node_by_id[$id];
+                    }
+                  } else {
+                    return node_by_id[item] || null;
                   }
                   return null;
                 };
                 node_del = function(node) {
                   var $id;
                   $id = node.$id;
-                  if ($id) {
+                  if (node_by_id[$id]) {
+                    node.$id = null;
                     delete node_by_id[$id];
                   }
                 };
                 node_set = function(item, node) {
                   var $id;
-                  $id = alight.utils.getId();
-                  item.$alite_id = $id;
-                  node.$id = $id;
-                  node_by_id[$id] = node;
+                  if (typeof item === 'object') {
+                    $id = alight.utils.getId();
+                    item.$alite_id = $id;
+                    node.$id = $id;
+                    node_by_id[$id] = node;
+                  } else {
+                    node.$id = item;
+                    node_by_id[item] = node;
+                  }
                 };
               }
             }
           }
-          if (self.element_list) {
-            return function(list) {
-              var applyList, bel, childCD, dom_inserts, dom_removes, el, elLast, element_list, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, len4, len5, len6, len7, m, n, next2, node, nodes2, o, p, pid, prev_moved, prev_node, ref, ref1, ref2, skippedAttrs;
-              if (!list || !list.length) {
-                list = [];
+          generator = [];
+          getResultList = function(input) {
+            var size, t;
+            t = typeof input;
+            if (t === 'object') {
+              if (input && input.length) {
+                return input;
               }
+            } else {
+              if (t === 'number') {
+                size = Math.floor(input);
+              } else if (t === 'string') {
+                size = Math.floor(input);
+                if (isNaN(size)) {
+                  return [];
+                }
+              }
+              if (size < generator.length) {
+                generator.length = size;
+              } else {
+                while (generator.length < size) {
+                  generator.push(generator.length);
+                }
+              }
+              return generator;
+            }
+            return [];
+          };
+          if (self.element_list) {
+            return function(input) {
+              var applyList, bel, childCD, dom_inserts, dom_removes, el, elLast, element_list, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, len4, len5, len6, len7, list, m, n, next2, node, nodes2, o, p, pid, prev_moved, prev_node, ref, ref1, ref2, skippedAttrs;
+              list = getResultList(input);
               last_element = self.top_element;
               dom_inserts = [];
               nodes2 = [];
@@ -3200,7 +3272,6 @@ alight.directives.al.repeat = {
               for (index = m = 0, len4 = list.length; m < len4; index = ++m) {
                 item = list[index];
                 item_value = item;
-                item = item || {};
                 node = node_get(item);
                 if (node) {
                   self.updateChild(node.CD, item, index, list);
@@ -3298,11 +3369,9 @@ alight.directives.al.repeat = {
               }
             };
           } else {
-            return function(list) {
-              var applyList, childCD, dom_inserts, dom_removes, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, len4, m, next2, node, nodes2, pid, prev_moved, prev_node, r, skippedAttrs;
-              if (!list || !list.length) {
-                list = [];
-              }
+            return function(input) {
+              var applyList, childCD, dom_inserts, dom_removes, i, it, item, item_value, j, k, l, last_element, len, len1, len2, len3, len4, list, m, next2, node, nodes2, pid, prev_moved, prev_node, r, skippedAttrs;
+              list = getResultList(input);
               last_element = self.top_element;
               dom_inserts = [];
               nodes2 = [];
@@ -3343,7 +3412,6 @@ alight.directives.al.repeat = {
               for (index = l = 0, len3 = list.length; l < len3; index = ++l) {
                 item = list[index];
                 item_value = item;
-                item = item || {};
                 node = node_get(item);
                 if (node) {
                   self.updateChild(node.CD, item, index, list);
@@ -3612,24 +3680,6 @@ alight.d.bo.switchDefault = {
   alight.d.bo["if"] = makeBindOnceIf(true);
   return alight.d.bo.ifnot = makeBindOnceIf(false);
 })();
-
-alight.d.bo.repeat = {
-  priority: 1000,
-  restrict: 'AM',
-  stopBinding: true,
-  init: function(scope, element, exp, env) {
-    var originalStart, self;
-    self = alight.directives.al.repeat.init(scope, element, exp, env);
-    originalStart = self.start;
-    self.start = function() {
-      scope.$watch('$finishScanOnce', function() {
-        return self.watch.stop();
-      });
-      return originalStart();
-    };
-    return self;
-  }
-};
 
 alight.d.al.stop = {
   priority: -10,
@@ -4101,19 +4151,19 @@ alight.d.al.style = function(scope, element, name) {
     cd = env.changeDetector["new"]();
     env.stopBinding = true;
     cd.$select = mapper = new Mapper;
-    watch = null;
-    cd.watch('$finishBinding', function() {
-      watch = cd.watch(key, function(value) {
-        var id;
-        id = mapper.getId(value);
-        if (id) {
-          return element.value = id;
-        } else {
-          return element.selectedIndex = -1;
-        }
-      });
-      return cd.scan();
+    alight.bind(cd, element, {
+      skip_attr: env.skippedAttr()
     });
+    watch = cd.watch(key, function(value) {
+      var id;
+      id = mapper.getId(value);
+      if (id) {
+        return element.value = id;
+      } else {
+        return element.selectedIndex = -1;
+      }
+    });
+    cd.scan();
     onChangeDOM = function(event) {
       var item;
       item = mapper.getItem(event.target.value);
@@ -4124,12 +4174,9 @@ alight.d.al.style = function(scope, element, name) {
     };
     f$.on(element, 'input', onChangeDOM);
     f$.on(element, 'change', onChangeDOM);
-    cd.watch('$destroy', function() {
+    return cd.watch('$destroy', function() {
       f$.off(element, 'input', onChangeDOM);
       return f$.off(element, 'change', onChangeDOM);
-    });
-    return alight.bind(cd, element, {
-      skip_attr: env.skippedAttr()
     });
   };
   return alight.d.al.option = function(scope, element, key, env) {
@@ -4433,30 +4480,6 @@ alight.filters.filter = F = (function() {
   };
 
   return F;
-
-})();
-
-var G;
-
-alight.filters.generator = G = (function() {
-  G.prototype.watchMode = 'simple';
-
-  function G(key, scope, env) {
-    var list;
-    list = [];
-    this.onChange = function(size) {
-      if (list.length >= size) {
-        list.length = size;
-      } else {
-        while (list.length < size) {
-          list.push({});
-        }
-      }
-      return env.setValue(list);
-    };
-  }
-
-  return G;
 
 })();
 
