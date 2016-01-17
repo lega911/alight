@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.3
+ * Angular Light 0.12.8
  * (c) 2015 Oleg Nechaev
  * Released under the MIT License.
- * 2015-12-25, http://angularlight.org/ 
+ * 2016-01-17, http://angularlight.org/ 
  */(function() {
     function buildAlight() {
         var alight = {
@@ -57,7 +57,7 @@
     };
     f$.off = function(element, event, callback) {
         element.removeEventListener(event, callback, false)
-    };        
+    };
 
     f$.isFunction = function(fn) {
         return (fn && Object.prototype.toString.call(fn) === '[object Function]')
@@ -131,7 +131,7 @@
     */
     f$.ajaxCache = {};
     f$.ajax = function(args) {
-        if(args.username || args.password || args.headers || args.data || !args.cache) return rawAjax(args);
+        if(args.username || args.password || args.headers || args.data || !args.cache) return f$.rawAjax(args);
 
         // cache
         var queryType = args.type || 'GET';
@@ -1063,7 +1063,7 @@ Scope.prototype.$new = function() {
       d = data[j];
       if (d.type === 'expression') {
         exp = d.list.join(' | ');
-        lname = exp.match(/^([^\w\d\s\$"']+)/);
+        lname = exp.match(/^([^\w\d\s\$"'\(\u0410-\u044F\u0401\u0451]+)/);
         if (lname) {
           name = lname[1];
           if (name === '#') {
@@ -1213,7 +1213,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.3';
+alight.version = '0.12.8';
 
 alight.debug = {
   scan: 0,
@@ -1223,117 +1223,162 @@ alight.debug = {
   parser: false
 };
 
-alight.directivePreprocessor = function(attrName, args) {
-  var $ns, dir, j, k, name, ns, path, raw, v;
-  if (attrName.slice(0, 5) === 'data-') {
-    name = attrName.slice(5);
-  } else {
-    name = attrName;
-  }
-  j = name.indexOf('-');
-  if (j < 0) {
-    return {
-      noNs: true
-    };
-  }
-  ns = name.substring(0, j);
-  name = name.substring(j + 1).replace(/(-\w)/g, function(m) {
-    return m.substring(1).toUpperCase();
+(function() {
+  var ext;
+  alight.hooks.attribute = ext = [];
+  ext.push({
+    code: 'dataPrefix',
+    fn: function() {
+      if (this.attrName.slice(0, 5) === 'data-') {
+        this.attrName = this.attrName.slice(5);
+      }
+    }
   });
-  raw = null;
-  $ns = args.cd.scope.$ns;
-  if ($ns && $ns.directives) {
-    path = $ns.directives[ns];
-    if (path) {
-      raw = path[name];
-      if (!raw) {
-        if (!$ns.inheritGlobal) {
-          return {
-            noDirective: true
-          };
+  ext.push({
+    code: 'colonNameSpace',
+    fn: function() {
+      var j;
+      if (this.directive) {
+        return;
+      }
+      j = this.attrName.indexOf(':');
+      if (j < 0) {
+        j = this.attrName.indexOf('-');
+      }
+      if (j < 0) {
+        this.result = 'noNS';
+        this.stop = true;
+        return;
+      } else {
+        this.ns = this.attrName.substring(0, j);
+        this.name = this.attrName.substring(j + 1).replace(/(-\w)/g, function(m) {
+          return m.substring(1).toUpperCase();
+        });
+      }
+    }
+  });
+  ext.push({
+    code: 'getScopeDirective',
+    fn: function() {
+      var $ns, path;
+      if (this.directive) {
+        return;
+      }
+      $ns = this.cd.scope.$ns;
+      if ($ns && $ns.directives) {
+        path = $ns.directives[this.ns];
+        if (path) {
+          this.directive = path[this.name];
+          if (!this.directive) {
+            if (!$ns.inheritGlobal) {
+              this.result = 'noDirective';
+              this.stop = true;
+              return;
+            }
+          }
+        } else {
+          if (!$ns.inheritGlobal) {
+            this.result = 'noNS';
+            this.stop = true;
+          }
         }
       }
-    } else {
-      if (!$ns.inheritGlobal) {
-        return {
-          noNs: true
-        };
+    }
+  });
+  ext.push({
+    code: 'getGlobalDirective',
+    fn: function() {
+      var path;
+      if (this.directive) {
+        return;
+      }
+      path = alight.d[this.ns];
+      if (!path) {
+        this.result = 'noNS';
+        this.stop = true;
+        return;
+      }
+      this.directive = path[this.name];
+      if (!this.directive) {
+        this.result = 'noDirective';
+        this.stop = true;
       }
     }
-  }
-  if (!raw) {
-    path = alight.d[ns];
-    if (!path) {
-      return {
-        noNs: true
-      };
-    }
-    raw = path[name];
-    if (!raw) {
-      return {
-        noDirective: true
-      };
-    }
-  }
-  dir = {};
-  if (f$.isFunction(raw)) {
-    dir.init = raw;
-  } else if (f$.isObject(raw)) {
-    for (k in raw) {
-      v = raw[k];
-      dir[k] = v;
-    }
-  } else {
-    throw 'Wrong directive: ' + ns + '.' + name;
-  }
-  dir.priority = raw.priority || 0;
-  dir.restrict = raw.restrict || 'A';
-  if (dir.restrict.indexOf(args.attr_type) < 0) {
-    throw 'Directive has wrong binding (attribute/element): ' + name;
-  }
-  dir.$init = function(cd, element, value, env) {
-    var doProcess, dscope;
-    doProcess = function() {
-      var dp, i, l, len, n;
-      l = dscope.procLine;
-      for (i = n = 0, len = l.length; n < len; i = ++n) {
-        dp = l[i];
-        dp.fn.call(dscope);
-        if (dscope.isDeferred) {
-          dscope.procLine = l.slice(i + 1);
-          break;
+  });
+  ext.push({
+    code: 'cloneDirective',
+    fn: function() {
+      var dir, k, r, v;
+      r = this.directive;
+      dir = {};
+      if (f$.isFunction(r)) {
+        dir.init = r;
+      } else if (f$.isObject(r)) {
+        for (k in r) {
+          v = r[k];
+          dir[k] = v;
         }
+      } else {
+        throw 'Wrong directive: ' + ns + '.' + name;
       }
-      return null;
-    };
-    dscope = {
-      element: element,
-      value: value,
-      cd: cd,
-      env: env,
-      ns: ns,
-      name: name,
-      args: args,
-      directive: dir,
-      isDeferred: false,
-      procLine: alight.hooks.directive,
-      makeDeferred: function() {
-        dscope.isDeferred = true;
-        dscope.env.stopBinding = true;
-        dscope.doBinding = true;
-        return function() {
-          dscope.isDeferred = false;
-          return doProcess();
-        };
+      dir.priority = r.priority || 0;
+      dir.restrict = r.restrict || 'A';
+      if (dir.restrict.indexOf(this.attrType) < 0) {
+        throw 'Directive has wrong binding (attribute/element): ' + name;
       }
-    };
-    if (dir.stopBinding) {
-      dscope.env.stopBinding = true;
+      this.directive = dir;
     }
-    doProcess();
-  };
-  return dir;
-};
+  });
+  return ext.push({
+    code: 'preprocessor',
+    fn: function() {
+      var directive, name, ns;
+      ns = this.ns;
+      name = this.name;
+      directive = this.directive;
+      directive.$init = function(cd, element, value, env) {
+        var doProcess, dscope;
+        doProcess = function() {
+          var dp, i, l, len, n;
+          l = dscope.procLine;
+          for (i = n = 0, len = l.length; n < len; i = ++n) {
+            dp = l[i];
+            dp.fn.call(dscope);
+            if (dscope.isDeferred) {
+              dscope.procLine = l.slice(i + 1);
+              break;
+            }
+          }
+          return null;
+        };
+        dscope = {
+          element: element,
+          value: value,
+          cd: cd,
+          env: env,
+          ns: ns,
+          name: name,
+          directive: directive,
+          isDeferred: false,
+          procLine: alight.hooks.directive,
+          makeDeferred: function() {
+            dscope.isDeferred = true;
+            dscope.env.stopBinding = true;
+            dscope.doBinding = true;
+            return function() {
+              dscope.isDeferred = false;
+              return doProcess();
+            };
+          }
+        };
+        if (directive.stopBinding) {
+          dscope.env.stopBinding = true;
+        }
+        doProcess();
+      };
+    }
+  });
+})();
 
 (function() {
   var ext;
@@ -1344,7 +1389,7 @@ alight.directivePreprocessor = function(attrName, args) {
       var result;
       if (this.directive.init) {
         if (alight.debug.directive) {
-          if (this.directive.scope || this.directive.ChangeDetector) {
+          if (this.directive.scope) {
             console.warn(this.ns + "-" + this.name + " uses scope and init together, probably you need use link instead of init");
           }
         }
@@ -1465,29 +1510,47 @@ testDirective = (function() {
       attr.name = attrName;
       attr.attrName = attrName;
       attr.element = args.element;
-      return args.list.push(attr);
+      args.list.push(attr);
+    } else if (args.attr_type === 'M') {
+      args.list.push(base);
     }
   };
   return function(attrName, args) {
-    var directive;
+    var attrHook, attrSelf, len, n, ref;
     if (args.skip_attr.indexOf(attrName) >= 0) {
       return addAttr(attrName, args, {
         skip: true
       });
     }
-    directive = alight.directivePreprocessor(attrName, args);
-    if (directive.noNs) {
-      return addAttr(attrName, args);
+    attrSelf = {
+      attrName: attrName,
+      attrType: args.attr_type,
+      element: args.element,
+      cd: args.cd,
+      result: null
+    };
+    ref = alight.hooks.attribute;
+    for (n = 0, len = ref.length; n < len; n++) {
+      attrHook = ref[n];
+      attrHook.fn.call(attrSelf);
+      if (attrSelf.stop) {
+        break;
+      }
     }
-    if (directive.noDirective) {
-      return addAttr(attrName, args, {
+    if (attrSelf.result === 'noNS') {
+      addAttr(attrName, args);
+      return;
+    }
+    if (attrSelf.result === 'noDirective') {
+      addAttr(attrName, args, {
         noDirective: true
       });
+      return;
     }
-    return args.list.push({
+    args.list.push({
       name: attrName,
-      directive: directive,
-      priority: directive.priority,
+      directive: attrSelf.directive,
+      priority: attrSelf.directive.priority,
       attrName: attrName
     });
   };
@@ -1554,7 +1617,7 @@ bindComment = function(cd, element, option) {
   testDirective(dirName, args);
   d = list[0];
   if (d.noDirective) {
-    throw "Directive not found: " + d.name;
+    throw "Comment directive not found: " + dirName;
   }
   directive = d.directive;
   env = {
@@ -1875,12 +1938,12 @@ alight.bind = alight.applyBindings = function(scope, element, option) {
 alight.bootstrap = function(input, data) {
   var ctrlName, element, lastScope, len, n, oneScope, option, scope;
   if (!input) {
-    input = document.querySelectorAll('[al-app]');
-  }
-  if (typeof input === 'string') {
+    alight.bootstrap('[al-app]');
+    alight.bootstrap('[al\\:app]');
+    return;
+  } else if (typeof input === 'string') {
     input = document.querySelectorAll(input);
-  }
-  if (f$.isElement(input)) {
+  } else if (f$.isElement(input)) {
     input = [input];
   }
   if (Array.isArray(input) || typeof input.length === 'number') {
@@ -1902,9 +1965,9 @@ alight.bootstrap = function(input, data) {
         scope = alight.Scope();
       }
       option = {
-        skip_attr: 'al-app'
+        skip_attr: ['al-app', 'al:app']
       };
-      ctrlName = element.getAttribute('al-app');
+      ctrlName = element.getAttribute('al-app') || element.getAttribute('al:app');
       if (ctrlName) {
         option.attachDirective = {
           'al-ctrl': ctrlName
@@ -1918,7 +1981,6 @@ alight.bootstrap = function(input, data) {
   alight.exceptionHandler('Error in bootstrap', 'Error input arguments', {
     input: input
   });
-  return null;
 };
 
 var clone, equal;
@@ -2046,251 +2108,342 @@ alight.exceptionHandler = function(e, title, locals) {
   return console.error(err);
 };
 
-var reserved;
-
-reserved = {
-  'instanceof': true,
-  'typeof': true,
-  'in': true,
-  'null': true,
-  'true': true,
-  'false': true,
-  'undefined': true,
-  'function': true,
-  'return': true
-};
-
-
-/*
-
-return:
-    result
-    expression
-    filters
-    isSimple
-    simpleVariables
- */
-
-alight.utils.parsExpression = function(line, cfg) {
-  var assignment, conv, d, exp, expression, i, index, input, isSimple, is_function, j, k, l, len, len1, m, n, newName, pars, prev, ref, ref1, result, ret, simpleVariables, variable, variable_assignment, variable_fn, variable_names, variables;
-  cfg = cfg || {};
-  input = cfg.input || [];
-  index = 0;
-  result = [];
-  prev = 0;
-  variables = [];
-  variable_names = [];
-  variable_assignment = [];
-  variable_fn = [];
-  simpleVariables = [];
-  isSimple = !input.length;
-  pars = function(lvl, stop, convert, is_string) {
-    var a, an, ap, assignIndex, check_variabe, var_before, variable, variable_index;
-    variable = '';
-    variable_index = -1;
-    assignIndex = null;
-    var_before = false;
-    check_variabe = function() {
-      var var_main;
-      if (!variable) {
-        return;
-      }
-      if (reserved[variable]) {
-        return;
-      }
-      var_main = variable.split('.')[0];
-      if (input.indexOf(var_main) >= 0) {
-        return;
-      }
-      if (variable[0].match(/[\d\.]/)) {
-        return;
-      }
-      variables.push(variable_index);
-      variable_names.push(variable);
-      variable_assignment.push(false);
-      variable_fn.push(false);
-      return true;
+(function() {
+  var assignmentOperator, isChar, isDigit, isSign, reserved, toDict;
+  toDict = function() {
+    var i, k, len, result;
+    result = {};
+    for (i = 0, len = arguments.length; i < len; i++) {
+      k = arguments[i];
+      result[k] = true;
+    }
+    return result;
+  };
+  reserved = toDict('instanceof', 'typeof', 'in', 'null', 'true', 'false', 'undefined', 'return');
+  isChar = (function() {
+    var rx;
+    rx = /[a-zA-Z\u0410-\u044F\u0401\u0451_\.\$]/;
+    return function(x) {
+      return x.match(rx);
     };
-    while (index < line.length) {
-      ap = line[index - 1];
-      a = line[index];
-      index += 1;
-      an = line[index];
-      if (convert) {
-        if (a.match(/[\d\w\u0410-\u044F\u0401\u0451_\.\$]/)) {
-          if (!variable) {
-            variable_index = index - 1;
+  })();
+  isDigit = function(x) {
+    return x.charCodeAt() >= 48 && x.charCodeAt() <= 57;
+  };
+  isSign = (function() {
+    var chars;
+    chars = toDict('+', '-', '>', '<', '=', '&', '|', '^', '!', '~');
+    return function(x) {
+      return chars[x] || false;
+    };
+  })();
+  assignmentOperator = toDict('=', '+=', '-=', '++', '--', '|=', '^=', '&=', '!=', '<<=', '>>=');
+  return alight.utils.parsExpression = function(expression, option) {
+    var build, convert, data, getFirstPart, inputKeywords, pars, ret, splitVariable, toElvis, uniq;
+    option = option || {};
+    inputKeywords = toDict.apply(null, option.input || []);
+    uniq = 1;
+    pars = function(option) {
+      var a, an, ap, bracket, child, commitText, filters, freeText, index, leftVariable, level, line, original, result, sign, status, stopKey, stringKey, stringValue, variable, variableChildren;
+      line = option.line;
+      result = option.result || [];
+      index = option.index || 0;
+      level = option.level || 0;
+      stopKey = option.stopKey || null;
+      variable = '';
+      leftVariable = null;
+      variableChildren = [];
+      sign = '';
+      status = false;
+      original = '';
+      stringKey = '';
+      stringValue = '';
+      freeText = '';
+      bracket = 0;
+      filters = null;
+      commitText = function() {
+        if (freeText) {
+          result.push({
+            type: 'free',
+            value: freeText
+          });
+        }
+        return freeText = '';
+      };
+      while (index <= line.length) {
+        ap = line[index - 1];
+        a = line[index++] || '';
+        an = line[index];
+        if ((status && freeText) || (!a)) {
+          commitText();
+        }
+        if (status === 'string') {
+          if (a === stringKey && ap !== '\\') {
+            stringValue += a;
+            result.push({
+              type: 'string',
+              value: stringValue
+            });
+            stringValue = '';
+            stringKey = '';
+            status = '';
+            continue;
           }
-          variable += a;
-        } else {
-          if (stop === '}') {
-            if (line.substring(index - 1).trim()[0] === ':') {
-              variable = '';
+          stringValue += a;
+          continue;
+        } else if (status === 'key') {
+          if (isChar(a) || isDigit(a)) {
+            variable += a;
+            continue;
+          }
+          if (a === '[') {
+            variable += a;
+            child = pars({
+              line: line,
+              index: index,
+              level: level + 1,
+              stopKey: ']'
+            });
+            if (!child.stopKeyOk) {
+              throw 'Error expression';
             }
-          }
-          if (check_variabe()) {
-            var_before = index;
-            if (a === '[') {
-              assignIndex = variable_assignment.length;
+            index = child.index;
+            variable += '###' + child.uniq + '###]';
+            variableChildren.push(child);
+            continue;
+          } else if (a === '?' && (an === '.' || an === '(' || an === '[')) {
+            variable += a;
+            continue;
+          } else if (a === '(') {
+            variable += a;
+            child = pars({
+              line: line,
+              index: index,
+              level: level + 1,
+              stopKey: ')'
+            });
+            if (!child.stopKeyOk) {
+              throw 'Error expression';
             }
+            index = child.index;
+            variable += '###' + child.uniq + '###)';
+            variableChildren.push(child);
+            continue;
           }
+          leftVariable = {
+            type: 'key',
+            value: variable,
+            start: index - variable.length - 1,
+            finish: index - 1,
+            children: variableChildren
+          };
+          result.push(leftVariable);
+          status = '';
           variable = '';
-        }
-      }
-      if (a === stop) {
-        return;
-      }
-      if (var_before) {
-        if (a !== ' ' && var_before !== index) {
-          var_before = false;
-        }
-      }
-      if (a === '=') {
-        if ((!(ap === '=' || an === '=')) && (ap !== '<') && (ap !== '>')) {
-          if (assignIndex) {
-            variable_assignment[assignIndex - 1] = 2;
-            assignIndex = null;
-          } else {
-            variable_assignment[variable_assignment.length - 1] = true;
+          variableChildren = [];
+        } else if (status === 'sign') {
+          if (isSign(a)) {
+            sign += a;
+            continue;
           }
-        }
-      }
-      if (a === '+') {
-        if (an === '+' || an === '=') {
-          if (assignIndex) {
-            variable_assignment[assignIndex - 1] = 2;
-            assignIndex = null;
-          } else {
-            variable_assignment[variable_assignment.length - 1] = true;
+          if (sign === '|' && level === 0 && bracket === 0) {
+            filters = line.substring(index - 1);
+            index = line.length + 1;
+            continue;
           }
-        }
-      }
-      if (a === '-') {
-        if (an === '-' || an === '=') {
-          if (assignIndex) {
-            variable_assignment[assignIndex - 1] = 2;
-            assignIndex = null;
-          } else {
-            variable_assignment[variable_assignment.length - 1] = true;
+          if (assignmentOperator[sign]) {
+            leftVariable.assignment = true;
           }
+          result.push({
+            type: 'sign',
+            value: sign
+          });
+          status = '';
+          sign = '';
         }
+        if (isChar(a)) {
+          status = 'key';
+          variable += a;
+          continue;
+        }
+        if (isSign(a)) {
+          status = 'sign';
+          sign += a;
+          continue;
+        }
+        if (a === '"' || a === "'") {
+          stringKey = a;
+          status = 'string';
+          stringValue += a;
+          continue;
+        }
+        if (a === stopKey) {
+          commitText();
+          return {
+            result: result,
+            index: index,
+            stopKeyOk: true,
+            uniq: uniq++
+          };
+        }
+        if (a === '(') {
+          bracket++;
+        }
+        if (a === ')') {
+          bracket--;
+        }
+        if (a === '{') {
+          commitText();
+          child = pars({
+            line: line,
+            index: index,
+            level: level + 1,
+            stopKey: '}'
+          });
+          result.push({
+            type: '{}',
+            child: child
+          });
+          index = child.index;
+          continue;
+        }
+        if (a === ':' && stopKey === '}') {
+          leftVariable.type = 'free';
+        }
+        freeText += a;
       }
-      if (a === '(' && !is_string) {
-        if (var_before) {
-          variable_fn[variable_fn.length - 1] = true;
-        }
-        pars(lvl + 1, ')', convert);
-      } else if (a === '[' && !is_string) {
-        pars(lvl + 1, ']', convert);
-      } else if (a === '{' && !is_string) {
-        pars(lvl + 1, '}', true);
-      } else if (a === '"') {
-        pars(lvl + 1, '"', false, true);
-      } else if (a === "'") {
-        pars(lvl + 1, "'", false, true);
-      } else if (a === '|') {
-        if (lvl === 0) {
-          if (an === '|') {
-            index += 1;
-          } else {
-            convert = false;
-            result.push(line.substring(prev, index - 1));
-            prev = index;
-          }
-        }
-      }
+      commitText();
+      return {
+        result: result,
+        index: index,
+        filters: filters
+      };
+    };
+    data = pars({
+      line: expression
+    });
+    ret = {
+      isSimple: !data.filters,
+      simpleVariables: []
+    };
+    if (data.filters) {
+      ret.expression = expression.substring(0, expression.length - data.filters.length);
+      ret.filters = data.filters.split('|');
+    } else {
+      ret.expression = expression;
     }
-    if (lvl === 0) {
-      result.push(line.substring(prev));
-    }
-    return check_variabe();
-  };
-  pars(0, null, true);
-  expression = result[0];
-  if (variables.length) {
-    exp = result[0];
-    for (i = j = variables.length - 1; j >= 0; i = j += -1) {
-      n = variables[i];
-      variable = variable_names[i];
-      assignment = variable_assignment[i];
-      is_function = variable_fn[i];
-      if (!is_function && !assignment) {
-        simpleVariables.push(variable);
-      }
-      if (is_function || assignment) {
-        isSimple = false;
-      }
-      d = variable.split('.');
-      conv = false;
-      if (d.length > 1 && !assignment) {
-        if (is_function) {
-          conv = d.length > 2;
-        } else {
-          conv = true;
-        }
-      }
-      if (conv) {
-        newName = null;
-        if (d[0] === 'this') {
-          d[0] = '$$scope';
-          if (d.length === 2) {
-            newName = '$$scope.' + d[1];
-          }
-        }
-        if (!newName) {
-          l = [];
-          l.push("($$=$$scope." + d[0] + ",$$==null)?undefined:");
-          if (is_function) {
-            ref = d.slice(1, +(d.length - 3) + 1 || 9e9);
-            for (k = 0, len = ref.length; k < len; k++) {
-              i = ref[k];
-              l.push("($$=$$." + i + ",$$==null)?undefined:");
-            }
-            l.push("$$." + d[d.length - 2]);
-            newName = '(' + l.join('') + ').' + d[d.length - 1];
-          } else {
-            ref1 = d.slice(1, +(d.length - 2) + 1 || 9e9);
-            for (m = 0, len1 = ref1.length; m < len1; m++) {
-              i = ref1[m];
-              l.push("($$=$$." + i + ",$$==null)?undefined:");
-            }
-            l.push("$$." + d[d.length - 1]);
-            newName = '(' + l.join('') + ')';
-          }
-        }
+    splitVariable = function(variable) {
+      var parts;
+      parts = variable.split(/[\.\[\(\?]/);
+      return {
+        count: parts.length,
+        firstPart: parts[0]
+      };
+    };
+    toElvis = function(name, isReserved) {
+      if (isReserved) {
+        return '($$=' + name + ',$$==null)?undefined:';
       } else {
-        if (variable === 'this') {
-          newName = '$$scope';
-        } else if (d[0] === 'this') {
-          newName = '$$scope.' + d.slice(1).join('.');
+        return '($$=$$' + name + ',$$==null)?undefined:';
+      }
+    };
+    getFirstPart = function(name) {
+      return name.split(/[\.\[\(\?]/)[0];
+    };
+    convert = function(variable) {
+      var firstPart, full, i, isReserved, last, len, p, parts, ref, result;
+      if (variable === 'this') {
+        return '$$scope';
+      }
+      firstPart = getFirstPart(variable);
+      isReserved = reserved[firstPart] || inputKeywords[firstPart];
+      parts = variable.split('?');
+      if (parts.length === 1) {
+        if (isReserved) {
+          return variable;
+        }
+        return '$$scope.' + variable;
+      }
+      if (isReserved) {
+        result = toElvis(parts[0], true);
+        full = parts[0];
+      } else {
+        result = toElvis('scope.' + parts[0]);
+        full = 'scope.' + parts[0];
+      }
+      ref = parts.slice(1, parts.length - 1);
+      for (i = 0, len = ref.length; i < len; i++) {
+        p = ref[i];
+        if (p[0] === '(') {
+          result += toElvis(full + p, isReserved);
         } else {
-          if (assignment === true && d.length === 1) {
-            newName = '($$scope.$root || $$scope).' + variable;
-          } else {
-            newName = '$$scope.' + variable;
-          }
+          result += toElvis(p);
+          full += p;
         }
       }
-      exp = exp.slice(0, n) + newName + exp.slice(n + variable.length);
+      last = parts[parts.length - 1];
+      if (last[0] === '(') {
+        if (!isReserved) {
+          result += '$$';
+        }
+        result += full + last;
+      } else {
+        result += '$$' + last;
+      }
+      return '(' + result + ')';
+    };
+    build = function(part) {
+      var c, childName, d, i, j, key, len, len1, name, ref, ref1, result, sv;
+      result = '';
+      ref = part.result;
+      for (i = 0, len = ref.length; i < len; i++) {
+        d = ref[i];
+        if (d.type === 'key') {
+          if (d.assignment) {
+            sv = splitVariable(d.value);
+            if (sv.firstPart === 'this') {
+              name = '$$scope' + d.value.substring(4);
+            } else if (sv.count < 2) {
+              name = '($$scope.$root || $$scope).' + d.value;
+            } else {
+              name = '$$scope.' + d.value;
+            }
+            ret.isSimple = false;
+          } else {
+            if (reserved[d.value]) {
+              name = d.value;
+            } else {
+              name = convert(d.value);
+              ret.simpleVariables.push(name);
+            }
+          }
+          if (d.children.length) {
+            ref1 = d.children;
+            for (j = 0, len1 = ref1.length; j < len1; j++) {
+              c = ref1[j];
+              key = "###" + c.uniq + "###";
+              childName = build(c);
+              name = name.split(key).join(childName);
+            }
+          }
+          result += name;
+          continue;
+        }
+        if (d.type === '{}') {
+          result += '{' + build(d.child) + '}';
+          continue;
+        }
+        result += d.value;
+      }
+      return result;
+    };
+    ret.result = build(data);
+    if (alight.debug.parser) {
+      console.log(expression, ret);
     }
-    result[0] = exp;
-  }
-  if (alight.debug.parser) {
-    console.log('parser', result);
-  }
-  ret = {
-    result: result[0],
-    expression: expression,
-    filters: null,
-    isSimple: isSimple,
-    simpleVariables: simpleVariables
+    return ret;
   };
-  if (result.length > 1) {
-    ret.isSimple = false;
-    ret.filters = result.slice(1);
-  }
-  return ret;
-};
+})();
 
 (function() {
   var cache, clone, rawParsText;
@@ -4257,11 +4410,15 @@ alight.d.al.ctrl = {
       },
       start: function() {
         var Controller, childCD, childScope, e, fn, k, ref, ref1, v;
-        fn = self.getController(name);
-        if (!fn) {
-          return;
+        if (name) {
+          fn = self.getController(name);
+          if (!fn) {
+            return;
+          }
+        } else {
+          fn = null;
         }
-        if (Object.keys(fn.prototype).length) {
+        if (fn && Object.keys(fn.prototype).length) {
           Controller = function() {};
           ref = Scope.prototype;
           for (k in ref) {
@@ -4283,7 +4440,9 @@ alight.d.al.ctrl = {
         childScope.$rootChangeDetector = childCD;
         childScope.$parent = scope;
         try {
-          fn.call(childScope, childScope, element, name, env);
+          if (fn) {
+            fn.call(childScope, childScope, element, name, env);
+          }
         } catch (_error) {
           e = _error;
           error(e, 'Error in controller: ' + name);
