@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.16
+ * Angular Light 0.12.17
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-02-19, http://angularlight.org/ 
+ * 2016-03-05, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -677,7 +677,7 @@ ChangeDetector.prototype.watch = function(name, callback, option) {
     isStatic: isStatic,
     isArray: Boolean(option.isArray),
     extraLoop: !option.readOnly,
-    deep: option.deep,
+    deep: option.deep === true ? 10 : option.deep,
     value: watchInitValue,
     callback: callback,
     exp: exp,
@@ -810,9 +810,9 @@ scanCore = function(topCD, result) {
             }
           }
         } else if (w.deep) {
-          if (!alight.utils.equal(last, value)) {
+          if (!alight.utils.equal(last, value, w.deep)) {
             mutated = true;
-            w.value = alight.utils.clone(value);
+            w.value = alight.utils.clone(value, w.deep);
           }
         } else {
           mutated = true;
@@ -857,7 +857,7 @@ scanCore = function(topCD, result) {
 };
 
 ChangeDetector.prototype.digest = function() {
-  var callback, duration, e, j, len, mainLoop, onScanOnce, result, root, start, totalChanges;
+  var callback, duration, e, error1, j, len, mainLoop, onScanOnce, result, root, start, totalChanges;
   root = this.root;
   mainLoop = 10;
   totalChanges = 0;
@@ -894,8 +894,8 @@ ChangeDetector.prototype.digest = function() {
       duration = get_time() - start;
       console.log("$scan: loops: (" + (10 - mainLoop) + "), last-loop changes: " + result.changes + ", watches: " + result.total + " / " + duration + "ms");
     }
-  } catch (_error) {
-    e = _error;
+  } catch (error1) {
+    e = error1;
     alight.exceptionHandler(e, '$scan, error in expression: ' + result.src, {
       src: result.src,
       scope: result.scope,
@@ -979,7 +979,7 @@ ChangeDetector.prototype.compile = function(expression, option) {
 };
 
 ChangeDetector.prototype.setValue = function(name, value) {
-  var cd, e, fn, j, key, len, msg, ref, rx, scope;
+  var cd, e, error1, error2, fn, j, key, len, msg, ref, rx, scope;
   cd = this;
   fn = cd.compile(name + ' = $value', {
     input: ['$value'],
@@ -987,8 +987,8 @@ ChangeDetector.prototype.setValue = function(name, value) {
   });
   try {
     return fn(cd.scope, value);
-  } catch (_error) {
-    e = _error;
+  } catch (error1) {
+    e = error1;
     msg = "can't set variable: " + name;
     if (alight.debug.parser) {
       console.warn(msg);
@@ -1008,7 +1008,7 @@ ChangeDetector.prototype.setValue = function(name, value) {
         try {
           fn(cd.scope, value);
           return;
-        } catch (_error) {
+        } catch (error2) {
 
         }
       }
@@ -1189,6 +1189,9 @@ Scope.prototype.$new = function() {
     env = {
       changeDetector: cd,
       setter: function(value) {
+        if (!option.update) {
+          return;
+        }
         if (value === null) {
           point.value = '';
         } else {
@@ -1196,14 +1199,30 @@ Scope.prototype.$new = function() {
         }
         return option.update();
       },
+      setterRaw: function(value) {
+        if (!option.updateRaw) {
+          return;
+        }
+        if (value === null) {
+          point.value = '';
+        } else {
+          point.value = '' + value;
+        }
+        return option.updateRaw();
+      },
       "finally": function(value) {
+        if (!option["finally"]) {
+          return;
+        }
         if (value === null) {
           point.value = '';
         } else {
           point.value = '' + value;
         }
         point.type = 'text';
-        return option["finally"]();
+        option["finally"]();
+        option.update = null;
+        return option["finally"] = null;
       }
     };
     scope.$changeDetector = cd;
@@ -1211,7 +1230,7 @@ Scope.prototype.$new = function() {
     return scope.$changeDetector = null;
   };
   watchText = function(expression, callback, config) {
-    var canUseSimpleBuilder, cd, ce, d, data, doFinally, doUpdate, exp, fn, i, j, k, len, len1, lname, name, noCache, privateValue, resultValue, st, value, w, watchCount;
+    var canUseSimpleBuilder, cd, ce, d, data, doFinally, doUpdate, doUpdateRaw, exp, fireCallback, fn, i, j, k, l, len, len1, len2, lname, name, noCache, privateValue, resultValue, st, updatePlanned, value, w, watchCount, watchObject;
     config = config || {};
     cd = this;
     if (alight.debug.watchText) {
@@ -1230,13 +1249,14 @@ Scope.prototype.$new = function() {
     watchCount = 0;
     canUseSimpleBuilder = true;
     noCache = false;
-    doUpdate = doFinally = function() {};
+    doUpdate = doUpdateRaw = doFinally = function() {};
     for (j = 0, len = data.length; j < len; j++) {
       d = data[j];
       if (d.type === 'expression') {
         exp = d.list.join(' | ');
         lname = exp.match(/^([^\w\d\s\$"'\(\u0410-\u044F\u0401\u0451]+)/);
         if (lname) {
+          d.isDir = true;
           name = lname[1];
           if (name === '#') {
             i = exp.indexOf(' ');
@@ -1258,6 +1278,9 @@ Scope.prototype.$new = function() {
             update: function() {
               return doUpdate();
             },
+            updateRaw: function() {
+              return doUpdateRaw();
+            },
             "finally": function() {
               doUpdate();
               return doFinally();
@@ -1265,7 +1288,6 @@ Scope.prototype.$new = function() {
           });
           noCache = true;
           if (d.type !== 'text') {
-            watchCount++;
             canUseSimpleBuilder = false;
           }
         } else {
@@ -1287,9 +1309,12 @@ Scope.prototype.$new = function() {
           } else {
             watchCount++;
             canUseSimpleBuilder = false;
+            d.watched = true;
             (function(d) {
               return cd.watch(exp, function(value) {
-                if(value == null) value = '';
+                if (value == null) {
+                  value = '';
+                }
                 d.value = value;
                 return doUpdate();
               });
@@ -1298,22 +1323,22 @@ Scope.prototype.$new = function() {
         }
       }
     }
-    if (!watchCount) {
-      value = '';
-      for (k = 0, len1 = data.length; k < len1; k++) {
-        d = data[k];
-        value += d.value;
-      }
-      cd.watch('$onScanOnce', function() {
-        return execWatchObject(cd.scope, {
-          callback: callback,
-          el: config.element,
-          ea: config.elementAttr
-        }, value);
-      });
-      return;
-    }
     if (canUseSimpleBuilder) {
+      if (!watchCount) {
+        value = '';
+        for (k = 0, len1 = data.length; k < len1; k++) {
+          d = data[k];
+          value += d.value;
+        }
+        cd.watch('$onScanOnce', function() {
+          return execWatchObject(cd.scope, {
+            callback: callback,
+            el: config.element,
+            ea: config.elementAttr
+          }, value);
+        });
+        return;
+      }
       if (noCache) {
         st = alight.utils.compile.buildSimpleText(null, data);
       } else {
@@ -1328,41 +1353,83 @@ Scope.prototype.$new = function() {
       });
       return;
     }
-    w = null;
-    resultValue = '';
+    watchObject = {
+      callback: callback,
+      el: config.element,
+      ea: config.elementAttr
+    };
     data.scope = cd.scope;
     fn = alight.utils.compile.buildText(expression, data);
-    doUpdate = function() {
-      return resultValue = fn();
+    doUpdateRaw = function() {
+      return execWatchObject(cd.scope, watchObject, fn());
     };
-    doFinally = function() {
-      var l, len2;
-      i = true;
+    if (watchCount) {
+      w = null;
+      resultValue = '';
+      doUpdate = function() {
+        resultValue = fn();
+      };
+      doFinally = function() {
+        var l, len2;
+        i = true;
+        for (l = 0, len2 = data.length; l < len2; l++) {
+          d = data[l];
+          if (d.type === 'expression') {
+            i = false;
+            break;
+          }
+        }
+        if (!i) {
+          return;
+        }
+        cd.watch('$finishScanOnce', function() {
+          return w.stop();
+        });
+        if (config.onStatic) {
+          config.onStatic();
+        }
+      };
+      privateValue = function() {
+        return resultValue;
+      };
       for (l = 0, len2 = data.length; l < len2; l++) {
         d = data[l];
         if (d.type === 'expression') {
-          i = false;
-          break;
+          if (d.isDir || d.watched) {
+            continue;
+          }
+          d.watched = true;
+          (function(d, exp) {
+            return cd.watch(exp, function(value) {
+              if (value == null) {
+                value = '';
+              }
+              d.value = value;
+              return doUpdate();
+            });
+          })(d, d.list.join(' | '));
         }
       }
-      if (!i) {
-        return;
-      }
-      cd.watch('$finishScanOnce', function() {
-        return w.stop();
+      doUpdate();
+      w = cd.watch(privateValue, callback, {
+        element: config.element,
+        elementAttr: config.elementAttr
       });
-      if (config.onStatic) {
-        return config.onStatic();
-      }
-    };
-    privateValue = function() {
-      return resultValue;
-    };
-    doUpdate();
-    w = cd.watch(privateValue, callback, {
-      element: config.element,
-      elementAttr: config.elementAttr
-    });
+    } else {
+      updatePlanned = false;
+      fireCallback = function() {
+        updatePlanned = false;
+        return doUpdateRaw();
+      };
+      doUpdate = function() {
+        if (updatePlanned) {
+          return;
+        }
+        updatePlanned = true;
+        return cd.watch('$onScanOnce', fireCallback);
+      };
+      doUpdate();
+    }
   };
   ChangeDetector.prototype.watchText = watchText;
   return Scope.prototype.$watchText = function(expression, callback, option) {
@@ -1385,7 +1452,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.16';
+alight.version = '0.12.17';
 
 alight.debug = {
   scan: 0,
@@ -1783,7 +1850,7 @@ bindText = function(cd, element) {
 };
 
 bindComment = function(cd, element, option) {
-  var args, d, dirName, directive, e, env, i, list, text, value;
+  var args, d, dirName, directive, e, env, error, i, list, text, value;
   text = element.nodeValue.trim();
   if (text.slice(0, 10) !== 'directive:') {
     return;
@@ -1823,8 +1890,8 @@ bindComment = function(cd, element, option) {
   }
   try {
     directive.$init(cd, element, value, env);
-  } catch (_error) {
-    e = _error;
+  } catch (error) {
+    e = error;
     alight.exceptionHandler(e, 'Error in directive: ' + d.name, {
       value: value,
       env: env,
@@ -1879,7 +1946,7 @@ bindElement = (function() {
     return results;
   };
   return function(cd, element, config) {
-    var args, attr, attrName, attrValue, bindResult, childElement, childNodes, d, directive, e, env, j, len, len1, len2, list, n, o, r, ref, ref1, skipChildren, skipToElement, skip_attr, value;
+    var args, attr, attrName, attrValue, bindResult, childElement, childNodes, d, directive, e, env, error, j, len, len1, len2, list, n, o, r, ref, ref1, skipChildren, skipToElement, skip_attr, value;
     bindResult = {
       directive: 0,
       text: 0,
@@ -1954,8 +2021,8 @@ bindElement = (function() {
           }
           try {
             directive.$init(cd, element, value, env);
-          } catch (_error) {
-            e = _error;
+          } catch (error) {
+            e = error;
             alight.exceptionHandler(e, 'Error in directive: ' + d.attrName, {
               value: value,
               env: env,
@@ -2055,7 +2122,7 @@ alight.nextTick = (function() {
   timer = null;
   list = [];
   exec = function() {
-    var callback, dlist, e, it, j, len, self;
+    var callback, dlist, e, error, it, j, len, self;
     timer = null;
     dlist = list.slice();
     list.length = 0;
@@ -2065,8 +2132,8 @@ alight.nextTick = (function() {
       self = it[1];
       try {
         callback.call(self);
-      } catch (_error) {
-        e = _error;
+      } catch (error) {
+        e = error;
         alight.exceptionHandler(e, '$nextTick, error in function', {
           fn: callback,
           self: self
@@ -2201,8 +2268,14 @@ alight.utils.getId = (function() {
   };
 })();
 
-alight.utils.clone = clone = function(d) {
+alight.utils.clone = clone = function(d, lvl) {
   var i, k, r, v;
+  if (lvl == null) {
+    lvl = 128;
+  }
+  if (lvl < 1) {
+    return null;
+  }
   if (!d) {
     return d;
   }
@@ -2213,7 +2286,7 @@ alight.utils.clone = clone = function(d) {
         results = [];
         for (j = 0, len = d.length; j < len; j++) {
           i = d[j];
-          results.push(clone(i));
+          results.push(clone(i, lvl - 1));
         }
         return results;
       })();
@@ -2231,15 +2304,21 @@ alight.utils.clone = clone = function(d) {
       if (k[0] === '$') {
         continue;
       }
-      r[k] = clone(v);
+      r[k] = clone(v, lvl - 1);
     }
     return r;
   }
   return d;
 };
 
-alight.utils.equal = equal = function(a, b) {
+alight.utils.equal = equal = function(a, b, lvl) {
   var i, j, k, len, set, ta, tb, v;
+  if (lvl == null) {
+    lvl = 128;
+  }
+  if (lvl < 1) {
+    return true;
+  }
   if (!a || !b) {
     return a === b;
   }
@@ -2255,7 +2334,7 @@ alight.utils.equal = equal = function(a, b) {
       }
       for (i = j = 0, len = a.length; j < len; i = ++j) {
         v = a[i];
-        if (!equal(v, b[i])) {
+        if (!equal(v, b[i], lvl - 1)) {
           return false;
         }
       }
@@ -2274,7 +2353,7 @@ alight.utils.equal = equal = function(a, b) {
         continue;
       }
       set[k] = true;
-      if (!equal(v, b[k])) {
+      if (!equal(v, b[k], lvl - 1)) {
         return false;
       }
     }
@@ -2286,7 +2365,7 @@ alight.utils.equal = equal = function(a, b) {
       if (set[k]) {
         continue;
       }
-      if (!equal(v, a[k])) {
+      if (!equal(v, a[k], lvl - 1)) {
         return false;
       }
     }
@@ -2814,7 +2893,7 @@ alight.exceptionHandler = function(e, title, locals) {
       expression
    */
   self.expression = function(src, cfg) {
-    var args, e, exp, fn, funcCache, hash, no_return, result;
+    var args, e, error, exp, fn, funcCache, hash, no_return, result;
     cfg = cfg || {};
     src = src.trim();
     hash = src + '#';
@@ -2851,8 +2930,8 @@ alight.exceptionHandler = function(e, title, locals) {
       } else {
         fn = self.Function('$$scope', result);
       }
-    } catch (_error) {
-      e = _error;
+    } catch (error) {
+      e = error;
       alight.exceptionHandler(e, 'Wrong expression: ' + src, {
         src: src,
         cfg: cfg
@@ -3264,7 +3343,7 @@ fastBinding.prototype.wt = function(expression, element, attr) {
         };
       }
       execute = function(event) {
-        var error;
+        var error, error1;
         if (prevent) {
           event.preventDefault();
         }
@@ -3273,8 +3352,8 @@ fastBinding.prototype.wt = function(expression, element, attr) {
         }
         try {
           fn(scope, event, element, getValue());
-        } catch (_error) {
-          error = _error;
+        } catch (error1) {
+          error = error1;
           alight.exceptionHandler(error, "Error in event: " + attrArgument + " = " + expression, {
             attr: attrArgument,
             exp: expression,
@@ -3389,6 +3468,7 @@ clickMaker = function(event) {
           f$.off(element, event, self.doCallback);
         },
         doCallback: function(e) {
+          var error;
           if (!self.stop) {
             e.preventDefault();
             if (self.stopPropagation) {
@@ -3400,8 +3480,8 @@ clickMaker = function(event) {
           }
           try {
             self.callback(scope, e);
-          } catch (_error) {
-            e = _error;
+          } catch (error) {
+            e = error;
             alight.exceptionHandler(e, 'al-click, error in expression: ' + name, {
               name: name,
               scope: scope,
@@ -4145,14 +4225,15 @@ alight.directives.al.repeat = {
 };
 
 alight.d.al.init = function(scope, element, exp) {
-  var e, fn;
+  var e, error, fn;
   try {
     fn = scope.$compile(exp, {
-      no_return: true
+      no_return: true,
+      input: ['$element']
     });
-    fn(scope);
-  } catch (_error) {
-    e = _error;
+    fn(scope, element);
+  } catch (error) {
+    e = error;
     alight.exceptionHandler(e, 'al-init, error in expression: ' + exp, {
       exp: exp,
       scope: scope,
@@ -4505,12 +4586,13 @@ alight.d.al.submit = function(scope, element, name) {
       f$.off(element, 'submit', self.doCallback);
     },
     doCallback: function(e) {
+      var error;
       e.preventDefault();
       e.stopPropagation();
       try {
         self.callback(scope, e);
-      } catch (_error) {
-        e = _error;
+      } catch (error) {
+        e = error;
         alight.exceptionHandler(e, 'al-submit, error in expression: ' + name, {
           name: name,
           scope: scope,
@@ -4547,10 +4629,11 @@ fn = function(key) {
         f$.off(element, key, self.callback);
       },
       callback: function(e) {
+        var error;
         try {
           self.caller(scope, e);
-        } catch (_error) {
-          e = _error;
+        } catch (error) {
+          e = error;
           alight.exceptionHandler(e, key + ', error in expression: ' + exp, {
             exp: exp,
             scope: scope,
@@ -4576,6 +4659,7 @@ for (i = 0, len = ref.length; i < len; i++) {
     al-html:url.tpl="/templates/{{templateId}}"
  */
 alight.d.al.html = {
+  restrict: 'AM',
   priority: 100,
   stopBinding: true,
   modifier: {},
@@ -4620,29 +4704,60 @@ alight.d.al.html = {
         }
       },
       prepare: function() {
-        self.baseElement = element;
-        self.topElement = document.createComment(" " + env.attrName + ": " + inputName + " ");
-        f$.before(element, self.topElement);
-        f$.remove(element);
+        if (element.nodeType === 8) {
+          self.baseElement = null;
+          self.topElement = element;
+        } else {
+          self.baseElement = element;
+          self.topElement = document.createComment(" " + env.attrName + ": " + inputName + " ");
+          f$.before(element, self.topElement);
+          f$.remove(element);
+        }
       },
       removeBlock: function() {
+        var el, i, len, ref;
         if (self.childCD) {
           self.childCD.destroy();
           self.childCD = null;
         }
         if (self.activeElement) {
-          self.removeDom(self.activeElement);
+          if (Array.isArray(self.activeElement)) {
+            ref = self.activeElement;
+            for (i = 0, len = ref.length; i < len; i++) {
+              el = ref[i];
+              self.removeDom(el);
+            }
+          } else {
+            self.removeDom(self.activeElement);
+          }
           self.activeElement = null;
         }
       },
       insertBlock: function(html) {
-        self.activeElement = self.baseElement.cloneNode(false);
-        self.activeElement.innerHTML = html;
-        self.insertDom(self.topElement, self.activeElement);
-        self.childCD = env.changeDetector["new"]();
-        alight.bind(self.childCD, self.activeElement, {
-          skip_attr: env.skippedAttr()
-        });
+        var current, el, t;
+        if (self.baseElement) {
+          self.activeElement = self.baseElement.cloneNode(false);
+          self.activeElement.innerHTML = html;
+          self.insertDom(self.topElement, self.activeElement);
+          self.childCD = env.changeDetector["new"]();
+          alight.bind(self.childCD, self.activeElement, {
+            skip_attr: env.skippedAttr()
+          });
+        } else {
+          t = document.createElement('body');
+          t.innerHTML = html;
+          current = self.topElement;
+          self.activeElement = [];
+          self.childCD = env.changeDetector["new"]();
+          while (el = t.firstChild) {
+            self.insertDom(current, el);
+            current = el;
+            self.activeElement.push(el);
+            alight.bind(self.childCD, current, {
+              skip_attr: env.skippedAttr()
+            });
+          }
+        }
       },
       updateDom: function(html) {
         self.removeBlock();
@@ -5073,7 +5188,7 @@ alight.d.al.ctrl = {
         return fn;
       },
       start: function() {
-        var Controller, childScope, e, fn, k, ref, ref1, v;
+        var Controller, childScope, e, error1, fn, k, ref, ref1, v;
         if (name) {
           fn = self.getController(name);
           if (!fn) {
@@ -5096,7 +5211,8 @@ alight.d.al.ctrl = {
           }
           childScope = alight.Scope({
             $parent: scope,
-            customScope: new Controller
+            customScope: new Controller,
+            childFromChangeDetector: env.changeDetector
           });
         } else {
           childScope = alight.Scope({
@@ -5108,8 +5224,8 @@ alight.d.al.ctrl = {
           if (fn) {
             fn.call(childScope, childScope, element, name, env);
           }
-        } catch (_error) {
-          e = _error;
+        } catch (error1) {
+          e = error1;
           error(e, 'Error in controller: ' + name);
         }
         alight.bind(childScope, element, {
