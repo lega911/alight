@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.17
+ * Angular Light 0.12.18
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-03-05, http://angularlight.org/ 
+ * 2016-03-16, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -183,7 +183,7 @@
 
 })();
 
-var ChangeDetector, Root, WA, execWatchObject, getFilter, get_time, makeFilterChain, makeSkipWatchObject, notEqual, scanCore, watchAny, watchInitValue;
+var ChangeDetector, Root, WA, execWatchObject, getFilter, get_time, makeFilterChain, notEqual, scanCore, watchAny, watchInitValue;
 
 alight.ChangeDetector = function(scope) {
   var cd, root;
@@ -191,43 +191,6 @@ alight.ChangeDetector = function(scope) {
   cd = new ChangeDetector(root, scope || {});
   root.topCD = cd;
   return cd;
-};
-
-makeSkipWatchObject = function() {
-  var list, map;
-  if (f$.isFunction(window.Map)) {
-    map = new Map;
-    return {
-      set: function(w) {
-        map.set(w, true);
-      },
-      get: function(w) {
-        if (!map.size) {
-          return false;
-        }
-        return map.get(w);
-      },
-      clear: function() {
-        map.clear();
-      }
-    };
-  } else {
-    list = [];
-    return {
-      set: function(w) {
-        list.push(w);
-      },
-      get: function(w) {
-        if (!list.length) {
-          return false;
-        }
-        return list.indexOf(w) >= 0;
-      },
-      clear: function() {
-        list.length = 0;
-      }
-    };
-  }
 };
 
 Root = function() {
@@ -243,7 +206,6 @@ Root = function() {
   this.finishBinding_lock = false;
   this.lateScan = false;
   this.topCD = null;
-  this.skippedWatches = makeSkipWatchObject();
   return this;
 };
 
@@ -554,6 +516,17 @@ ChangeDetector.prototype.watch = function(name, callback, option) {
       if (option.onStop) {
         return option.onStop();
       }
+    },
+    refresh: function() {
+      var value;
+      value = d.exp(scope);
+      if (value && d.deep) {
+        return d.value = alight.utils.clone(value, d.deep);
+      } else if (value && d.isArray) {
+        return d.value = value.slice();
+      } else {
+        return d.value = value;
+      }
     }
   };
   if (option.oneTime) {
@@ -566,6 +539,33 @@ ChangeDetector.prototype.watch = function(name, callback, option) {
     };
   }
   return r;
+};
+
+ChangeDetector.prototype.watchGroup = function(keys, callback) {
+  var cd, group, j, key, len, planned;
+  cd = this;
+  if (!callback && f$.isFunction(keys)) {
+    callback = keys;
+    keys = null;
+  }
+  planned = false;
+  group = function() {
+    if (planned) {
+      return;
+    }
+    planned = true;
+    return cd.watch('$onScanOnce', function() {
+      planned = false;
+      return callback();
+    });
+  };
+  if (keys) {
+    for (j = 0, len = keys.length; j < len; j++) {
+      key = keys[j];
+      cd.watch(key, group);
+    }
+  }
+  return group;
 };
 
 get_time = (function() {
@@ -679,14 +679,12 @@ scanCore = function(topCD, result) {
               w.el.nodeValue = value;
             }
           } else {
-            if (!root.skippedWatches.get(w)) {
-              if (last === watchInitValue) {
-                last = void 0;
-              }
-              if (w.callback.call(scope, value, last) !== '$scanNoChanges') {
-                if (w.extraLoop) {
-                  extraLoop = true;
-                }
+            if (last === watchInitValue) {
+              last = void 0;
+            }
+            if (w.callback.call(scope, value, last) !== '$scanNoChanges') {
+              if (w.extraLoop) {
+                extraLoop = true;
               }
             }
           }
@@ -771,9 +769,6 @@ ChangeDetector.prototype.scan = function(cfg) {
   if (cfg.callback) {
     root.watchers.finishScanOnce.push(cfg.callback);
   }
-  if (cfg.skipWatch) {
-    root.skippedWatches.set(cfg.skipWatch.$);
-  }
   if (cfg.late) {
     if (root.lateScan) {
       return;
@@ -805,7 +800,6 @@ ChangeDetector.prototype.scan = function(cfg) {
     }
   }
   root.status = null;
-  root.skippedWatches.clear();
   ref1 = root.watchers.finishScan;
   for (k = 0, len1 = ref1.length; k < len1; k++) {
     callback = ref1[k];
@@ -881,7 +875,7 @@ ChangeDetector.prototype.getValue = function(name) {
   return this["eval"](name);
 };
 
-var Scope;
+var Scope, getCDFromScope;
 
 alight.hooks.scope = [];
 
@@ -927,24 +921,39 @@ Scope = function() {};
 
 alight.core.Scope = Scope;
 
-Scope.prototype.$watch = function(name, callback, option) {
+getCDFromScope = function(scope, name, option) {
   var cd;
   if (option && option.changeDetector) {
-    cd = option.changeDetector;
+    return option.changeDetector;
   } else {
-    cd = this.$changeDetector;
+    cd = scope.$changeDetector;
   }
-  if (!cd && !this.$rootChangeDetector.children.length) {
-    cd = this.$rootChangeDetector;
+  if (!cd && !scope.$rootChangeDetector.children.length) {
+    cd = scope.$rootChangeDetector;
   }
   if (cd) {
+    return cd;
+  }
+  alight.exceptionHandler('', 'You can do $watch during binding only: ' + name, {
+    name: name,
+    option: option,
+    scope: scope
+  });
+};
+
+Scope.prototype.$watch = function(name, callback, option) {
+  var cd;
+  cd = getCDFromScope(this, name, option);
+  if (cd) {
     return cd.watch(name, callback, option);
-  } else {
-    alight.exceptionHandler('', 'You can do $watch during binding only: ' + name, {
-      name: name,
-      option: option,
-      scope: this
-    });
+  }
+};
+
+Scope.prototype.$watchGroup = function(keys, callback) {
+  var cd;
+  cd = getCDFromScope(this, '' + keys);
+  if (cd) {
+    return cd.watchGroup(keys, callback);
   }
 };
 
@@ -1015,15 +1024,86 @@ Scope.prototype.$new = function() {
           with function: {{fn()}}
           with filter: {{value | filter}}
    */
-  var getId, watchText;
-  getId = (function() {
-    var i;
-    i = 0;
-    return function() {
-      i++;
-      return 'wt' + i;
-    };
-  })();
+  var optmizeElement, watchText;
+  alight.utils.optmizeElement = optmizeElement = function(element) {
+    var current, d, data, e, exp, i, j, k, len, len1, lname, mark, n, next, prev, ref, result, text, wrapped;
+    if (element.nodeType === 1) {
+      e = element.firstChild;
+      while (e) {
+        next = e.nextSibling;
+        optmizeElement(e);
+        e = next;
+      }
+    } else if (element.nodeType === 3) {
+      text = element.data;
+      mark = alight.utils.pars_start_tag;
+      i = text.indexOf(mark);
+      if (i < 0) {
+        return;
+      }
+      if (text.slice(i + mark.length).indexOf(mark) < 0) {
+        return;
+      }
+      prev = 't';
+      current = {
+        value: ''
+      };
+      result = [current];
+      data = alight.utils.parsText(text);
+      for (j = 0, len = data.length; j < len; j++) {
+        d = data[j];
+        if (d.type === 'text') {
+          current.value += d.value;
+        } else {
+          exp = d.list.join('|');
+          wrapped = '{{' + exp + '}}';
+          lname = exp.match(/^([^\w\d\s\$"'\(\u0410-\u044F\u0401\u0451]+)/);
+          if (lname) {
+            if (prev === 't' || prev === 'd') {
+              current.value += wrapped;
+            } else {
+              current = {
+                value: wrapped
+              };
+              result.push(current);
+            }
+            prev = 'd';
+          } else if (d.list.length === 1) {
+            if (prev === 't' || prev === 'v') {
+              current.value += wrapped;
+            } else {
+              current = {
+                value: wrapped
+              };
+              result.push(current);
+            }
+            prev = 'v';
+          } else {
+            if (prev === 't') {
+              current.value += wrapped;
+            } else {
+              current = {
+                value: wrapped
+              };
+              result.push(current);
+            }
+          }
+        }
+      }
+      if (result.length < 2) {
+        return;
+      }
+      e = element;
+      e.data = result[0].value;
+      ref = result.slice(1);
+      for (k = 0, len1 = ref.length; k < len1; k++) {
+        d = ref[k];
+        n = document.createTextNode(d.value);
+        f$.after(e, n);
+        e = n;
+      }
+    }
+  };
   alight.text.$base = function(option) {
     var cd, dir, env, point, scope;
     point = option.point;
@@ -1303,14 +1383,15 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.17';
+alight.version = '0.12.18';
 
 alight.debug = {
   scan: 0,
   directive: false,
   watch: false,
   watchText: false,
-  parser: false
+  parser: false,
+  domOptimization: true
 };
 
 (function() {
@@ -2077,13 +2158,16 @@ alight.bootstrap = function(input, data) {
         scope = alight.Scope();
       }
       option = {
-        skip_attr: ['al-app', 'al:app']
+        skip_attr: ['al-app', 'al:app', 'data-al-app']
       };
-      ctrlName = element.getAttribute('al-app') || element.getAttribute('al:app' || element.getAttribute('data-al-app'));
+      ctrlName = element.getAttribute('al-app') || element.getAttribute('al:app') || element.getAttribute('data-al-app');
       if (ctrlName) {
         option.attachDirective = {
           'al-ctrl': ctrlName
         };
+      }
+      if (alight.debug.domOptimization) {
+        alight.utils.optmizeElement(element);
       }
       alight.bind(scope, element, option);
       lastScope = scope;
@@ -2375,7 +2459,7 @@ alight.exceptionHandler = function(e, title, locals) {
             index = line.length + 1;
             continue;
           }
-          if (assignmentOperator[sign]) {
+          if ((assignmentOperator[sign] || sign[0] === '=') && sign[1] !== '=') {
             leftVariable.assignment = true;
           }
           result.push({
@@ -3309,9 +3393,8 @@ alight.d.al.value = {
       },
       updateModel: function() {
         scope.$setValue(variable, element.value);
-        scope.$scan({
-          skipWatch: self.watch
-        });
+        self.watch.refresh();
+        scope.$scan();
       },
       watchModel: function() {
         self.watch = scope.$watch(variable, self.updateDom);
@@ -3351,9 +3434,8 @@ alight.d.al.checked = {
         var value;
         value = element.checked;
         scope.$setValue(name, value);
-        scope.$scan({
-          skipWatch: self.watch
-        });
+        self.watch.refresh();
+        scope.$scan();
       },
       watchModel: function() {
         self.watch = scope.$watch(name, self.updateDom);
@@ -4123,9 +4205,8 @@ alight.d.al.focused = {
           return;
         }
         scope.$setValue(name, value);
-        scope.$scan({
-          skipWatch: self.watch
-        });
+        self.watch.refresh();
+        scope.$scan();
       },
       onDom: function() {
         var voff, von;
@@ -4249,6 +4330,9 @@ alight.d.al.html = {
         if (self.baseElement) {
           self.activeElement = self.baseElement.cloneNode(false);
           self.activeElement.innerHTML = html;
+          if (self.domOptimization) {
+            alight.utils.optmizeElement(self.activeElement);
+          }
           self.insertDom(self.topElement, self.activeElement);
           self.childCD = env.changeDetector["new"]();
           alight.bind(self.childCD, self.activeElement, {
@@ -4257,6 +4341,9 @@ alight.d.al.html = {
         } else {
           t = document.createElement('body');
           t.innerHTML = html;
+          if (self.domOptimization) {
+            alight.utils.optmizeElement(t);
+          }
           current = self.topElement;
           self.activeElement = [];
           self.childCD = env.changeDetector["new"]();
@@ -4310,6 +4397,7 @@ alight.d.al.html.modifier.id = function(self) {
 };
 
 alight.d.al.html.modifier.url = function(self) {
+  self.domOptimization = alight.debug.domOptimization;
   self.loadHtml = function(cfg) {
     f$.ajax(cfg);
   };
@@ -4332,18 +4420,24 @@ alight.d.al.html.modifier.url = function(self) {
 
 alight.d.al.html.modifier.scope = function(self, option) {
   var d, innerName, oneTime, outerName;
-  d = self.name.match(/(.+)\:\s*\:\:(\w+)$/);
-  if (d) {
-    oneTime = true;
+  d = self.name.split(':');
+  if (d.length === 2) {
+    self.name = d[0];
+    outerName = d[1];
   } else {
-    oneTime = false;
-    d = self.name.match(/(.+)\:\s*(\w+)$/);
-    if (!d) {
-      throw 'Wrong expression ' + self.name;
+    d = self.name.match(/(.+)\:\s*\:\:([\d\w]+)$/);
+    if (d) {
+      oneTime = true;
+    } else {
+      oneTime = false;
+      d = self.name.match(/(.+)\:\s*([\.\w]+)$/);
+      if (!d) {
+        throw 'Wrong expression ' + self.name;
+      }
     }
+    self.name = d[1];
+    outerName = d[2];
   }
-  self.name = d[1];
-  outerName = d[2];
   innerName = 'outer';
   return self.insertBlock = function(html) {
     var ChildScope, parentScope, scope;
@@ -4449,7 +4543,9 @@ alight.d.al.ctrl = {
         }
         try {
           if (fn) {
+            childScope.$changeDetector = childScope.$rootChangeDetector;
             fn.call(childScope, childScope, element, name, env);
+            childScope.$changeDetector = null;
           }
         } catch (error1) {
           e = error1;
