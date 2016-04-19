@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.18
+ * Angular Light 0.12.19
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-03-16, http://angularlight.org/ 
+ * 2016-04-19, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -82,23 +82,6 @@
         if(element.classList) element.classList.remove(name)
         else element.className = element.className.replace(new RegExp('(^| )' + name.split(' ').join('|') + '( |$)', 'gi'), ' ')
     };
-
-    f$.ready = (function() {
-        var callbacks = [];
-        var ready = false;
-        function onReady() {
-            ready = true;
-            f$.off(document, 'DOMContentLoaded', onReady);
-            for(var i=0;i<callbacks.length;i++)
-                callbacks[i]();
-            callbacks.length = 0;
-        };
-        f$.on(document, 'DOMContentLoaded', onReady);
-        return function(callback) {
-            if(ready) callback();
-            else callbacks.push(callback)
-        }
-    })();
 
     f$.rawAjax = function(args) {
         var request = new XMLHttpRequest();
@@ -332,6 +315,23 @@
     };
 
 })();
+f$.ready = (function() {
+    var callbacks = [];
+    var ready = false;
+    function onReady() {
+        ready = true;
+        f$.off(document, 'DOMContentLoaded', onReady);
+        for(var i=0;i<callbacks.length;i++)
+            callbacks[i]();
+        callbacks.length = 0;
+    };
+    f$.on(document, 'DOMContentLoaded', onReady);
+    return function(callback) {
+        if(ready) callback();
+        else callbacks.push(callback)
+    }
+})();
+
 var ChangeDetector, Root, WA, execWatchObject, getFilter, get_time, makeFilterChain, notEqual, scanCore, watchAny, watchInitValue;
 
 alight.ChangeDetector = function(scope) {
@@ -1532,7 +1532,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.18';
+alight.version = '0.12.19';
 
 alight.debug = {
   scan: 0,
@@ -1680,6 +1680,7 @@ alight.debug = {
               break;
             }
           }
+          dscope.async = true;
           return null;
         };
         dscope = {
@@ -1697,9 +1698,12 @@ alight.debug = {
             dscope.isDeferred = true;
             dscope.doBinding = true;
             dscope.retStopBinding = true;
+            dscope.async = false;
             return function() {
               dscope.isDeferred = false;
-              return doProcess();
+              if (dscope.async) {
+                return doProcess();
+              }
             };
           }
         };
@@ -1708,6 +1712,9 @@ alight.debug = {
         }
         env.attrArgument = attrArgument;
         doProcess();
+        if (dscope.retStopBinding) {
+          return 'stopBinding';
+        }
       };
     }
   });
@@ -1829,9 +1836,6 @@ alight.debug = {
         alight.bind(this.cd, this.element, {
           skip_attr: this.env.skippedAttr()
         });
-      }
-      if (this.retStopBinding) {
-        this.env.stopBinding = true;
       }
     }
   });
@@ -2101,7 +2105,9 @@ bindElement = (function() {
             console.log('bind', d.attrName, value, d);
           }
           try {
-            directive.$init(cd, element, value, env);
+            if (directive.$init(cd, element, value, env) === 'stopBinding') {
+              skipChildren = true;
+            }
           } catch (error) {
             e = error;
             alight.exceptionHandler(e, 'Error in directive: ' + d.attrName, {
@@ -3488,14 +3494,14 @@ fastBinding.prototype.wt = function(expression, element, attr) {
       };
       for (j = 0, len1 = eventList.length; j < len1; j++) {
         e = eventList[j];
-        element.addEventListener(e, handler);
+        f$.on(element, e, handler);
       }
       scope.$watch('$destroy', function() {
         var l, len2, results;
         results = [];
         for (l = 0, len2 = eventList.length; l < len2; l++) {
           e = eventList[l];
-          results.push(element.removeEventListener(e, handler));
+          results.push(f$.off(element, e, handler));
         }
         return results;
       });
