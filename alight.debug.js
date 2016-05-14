@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.19
+ * Angular Light 0.12.20
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-04-19, http://angularlight.org/ 
+ * 2016-05-14, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -1532,7 +1532,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.19';
+alight.version = '0.12.20';
 
 alight.debug = {
   scan: 0,
@@ -2099,7 +2099,8 @@ bindElement = (function() {
             attributes: list,
             takeAttr: takeAttr,
             skippedAttr: skippedAttr,
-            stopBinding: false
+            stopBinding: false,
+            elementCanBeRemoved: config.elementCanBeRemoved
           };
           if (alight.debug.directive) {
             console.log('bind', d.attrName, value, d);
@@ -2465,10 +2466,21 @@ alight.utils.equal = equal = function(a, b, lvl) {
 };
 
 alight.exceptionHandler = function(e, title, locals) {
-  var err;
-  console.warn(title + '\n', (e.message || '') + '\n', locals);
-  err = typeof e === 'string' ? e : e.stack;
-  return console.error(err);
+  var output;
+  output = [];
+  if (title) {
+    output.push(title);
+  }
+  if (e && e.message) {
+    output.push(e.message);
+  }
+  if (locals) {
+    output.push(locals);
+  }
+  if (e) {
+    output.push(e.stack ? e.stack : e);
+  }
+  return console.error.apply(console, output);
 };
 
 (function() {
@@ -3668,9 +3680,18 @@ alight.d.al.checked = {
 
 alight.d.al["if"] = {
   priority: 700,
-  stopBinding: true,
   link: function(scope, element, name, env) {
     var self;
+    if (env.elementCanBeRemoved) {
+      alight.exceptionHandler(null, env.attrName + " can't control element because of " + env.elementCanBeRemoved, {
+        scope: scope,
+        element: element,
+        value: name,
+        env: env
+      });
+      return {};
+    }
+    env.stopBinding = true;
     return self = {
       item: null,
       childCD: null,
@@ -3710,7 +3731,8 @@ alight.d.al["if"] = {
         self.insertDom(self.top_element, self.item);
         self.childCD = env.changeDetector["new"]();
         alight.bind(self.childCD, self.item, {
-          skip_attr: env.skippedAttr()
+          skip_attr: env.skippedAttr(),
+          elementCanBeRemoved: env.attrName
         });
       },
       watchModel: function() {
@@ -3728,7 +3750,6 @@ alight.d.al["if"] = {
 
 alight.d.al.ifnot = {
   priority: 700,
-  stopBinding: true,
   link: function(scope, element, name, env) {
     var self;
     self = alight.d.al["if"].link(scope, element, name, env);
@@ -3760,9 +3781,18 @@ alight.d.al.ifnot = {
 alight.directives.al.repeat = {
   priority: 1000,
   restrict: 'AM',
-  stopBinding: true,
   init: function(parentScope, element, exp, env) {
     var CD, self;
+    if (env.elementCanBeRemoved) {
+      alight.exceptionHandler(null, env.attrName + " can't control element because of " + env.elementCanBeRemoved, {
+        scope: parentScope,
+        element: element,
+        value: exp,
+        env: env
+      });
+      return {};
+    }
+    env.stopBinding = true;
     CD = parentScope.$changeDetector;
     return self = {
       start: function() {
@@ -4172,7 +4202,8 @@ alight.directives.al.repeat = {
               for (p = 0, len7 = applyList.length; p < len7; p++) {
                 it = applyList[p];
                 alight.bind(it.cd, it.el, {
-                  skip_attr: skippedAttrs
+                  skip_attr: skippedAttrs,
+                  elementCanBeRemoved: env.attrName
                 });
               }
             };
@@ -4297,7 +4328,8 @@ alight.directives.al.repeat = {
                   fastBinding.bind(it.cd, it.el);
                 } else {
                   r = alight.bind(it.cd, it.el, {
-                    skip_attr: skippedAttrs
+                    skip_attr: skippedAttrs,
+                    elementCanBeRemoved: env.attrName
                   });
                   if (r.directive === 0 && r.hook === 0) {
                     fastBinding = new alight.core.fastBinding(self.base_element);
@@ -4498,9 +4530,18 @@ alight.d.al.stop = {
 
 alight.d.al.include = {
   priority: 100,
-  stopBinding: true,
   link: function(scope, element, name, env) {
     var activeElement, baseElement, child, self, topElement;
+    if (env.elementCanBeRemoved) {
+      alight.exceptionHandler(null, env.attrName + " can't control element because of " + env.elementCanBeRemoved, {
+        scope: scope,
+        element: element,
+        value: name,
+        env: env
+      });
+      return {};
+    }
+    env.stopBinding = true;
     child = null;
     baseElement = null;
     topElement = null;
@@ -4535,7 +4576,8 @@ alight.d.al.include = {
         self.insertDom(topElement, activeElement);
         child = env.changeDetector["new"]();
         alight.bind(child, activeElement, {
-          skip_attr: env.skippedAttr()
+          skip_attr: env.skippedAttr(),
+          elementCanBeRemoved: env.attrName
         });
       },
       updateDom: function(url) {
@@ -4748,10 +4790,19 @@ for (i = 0, len = ref.length; i < len; i++) {
 alight.d.al.html = {
   restrict: 'AM',
   priority: 100,
-  stopBinding: true,
   modifier: {},
   link: function(scope, element, inputName, env) {
     var self;
+    if (env.elementCanBeRemoved && element.nodeType !== 8) {
+      alight.exceptionHandler(null, env.attrName + " can't control element because of " + env.elementCanBeRemoved, {
+        scope: scope,
+        element: element,
+        value: inputName,
+        env: env
+      });
+      return {};
+    }
+    env.stopBinding = true;
     return self = {
       baseElement: null,
       topElement: null,
@@ -4831,7 +4882,8 @@ alight.d.al.html = {
           self.insertDom(self.topElement, self.activeElement);
           self.childCD = env.changeDetector["new"]();
           alight.bind(self.childCD, self.activeElement, {
-            skip_attr: env.skippedAttr()
+            skip_attr: env.skippedAttr(),
+            elementCanBeRemoved: env.attrName
           });
         } else {
           t = document.createElement('body');
@@ -4847,7 +4899,8 @@ alight.d.al.html = {
             current = el;
             self.activeElement.push(el);
             alight.bind(self.childCD, current, {
-              skip_attr: env.skippedAttr()
+              skip_attr: env.skippedAttr(),
+              elementCanBeRemoved: env.attrName
             });
           }
         }
