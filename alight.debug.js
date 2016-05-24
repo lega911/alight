@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.20
+ * Angular Light 0.12.22
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-05-14, http://angularlight.org/ 
+ * 2016-05-24, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -628,7 +628,7 @@ ChangeDetector.prototype.watch = function(name, callback, option) {
       if (ce.filters) {
         return makeFilterChain(cd, ce, callback, option);
       }
-      isStatic = ce.isSimple && ce.simpleVariables.length === 0 && !option.isArray;
+      isStatic = ce.isSimple && ce.simpleVariables.length === 0;
       exp = ce.fn;
     }
   }
@@ -1532,7 +1532,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.20';
+alight.version = '0.12.22';
 
 alight.debug = {
   scan: 0,
@@ -3247,7 +3247,6 @@ fastBinding.prototype.wt = function(expression, element, attr) {
     element: element,
     elementAttr: attr
   });
-  this.currentCD.scan();
 };
 
 (function() {
@@ -3287,6 +3286,7 @@ fastBinding.prototype.wt = function(expression, element, attr) {
   };
   setKeyModifier('alt', 'altKey');
   setKeyModifier('control', 'ctrlKey');
+  setKeyModifier('ctrl', 'ctrlKey');
   setKeyModifier('meta', 'metaKey');
   setKeyModifier('shift', 'shiftKey');
   formatModifier = function(modifier, filterByEvents) {
@@ -3321,6 +3321,9 @@ fastBinding.prototype.wt = function(expression, element, attr) {
     } else if (modifier.fn) {
       result.fn = modifier.fn;
     }
+    if (modifier.init) {
+      result.init = modifier.init;
+    }
     return result;
   };
   alight.d.al.on = {
@@ -3348,7 +3351,7 @@ fastBinding.prototype.wt = function(expression, element, attr) {
     right: 39
   };
   makeEvent = function(attrArgument, option) {
-    var args, debounce, debounceTime, eventList, eventName, filterByKey, i, k, len, modifier, modifiers, prevent, ref, scan, stop, throttle, throttleId;
+    var args, debounce, debounceTime, eventList, eventName, filterByKey, i, initFn, k, len, modifier, modifiers, prevent, ref, scan, stop, throttle, throttleId;
     option = option || {};
     args = attrArgument.split('.');
     eventName = args[0];
@@ -3362,6 +3365,7 @@ fastBinding.prototype.wt = function(expression, element, attr) {
     throttleId = null;
     debounce = null;
     debounceTime = 0;
+    initFn = null;
     modifier = alight.hooks.eventModifier[eventName];
     if (modifier) {
       modifier = formatModifier(modifier);
@@ -3369,6 +3373,9 @@ fastBinding.prototype.wt = function(expression, element, attr) {
         eventList = modifier.event;
         if (modifier.fn) {
           modifiers.push(modifier);
+        }
+        if (modifier.init) {
+          initFn = modifier.init;
         }
       }
     }
@@ -3507,6 +3514,9 @@ fastBinding.prototype.wt = function(expression, element, attr) {
       for (j = 0, len1 = eventList.length; j < len1; j++) {
         e = eventList[j];
         f$.on(element, e, handler);
+      }
+      if (initFn) {
+        initFn(scope, element, expression, env);
       }
       scope.$watch('$destroy', function() {
         var l, len2, results;
