@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.22
+ * Angular Light 0.12.24
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-05-24, http://angularlight.org/ 
+ * 2016-05-31, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -337,11 +337,29 @@ makeFilterChain = (function() {
         filterArg = null;
       }
       filterObject = getFilter(filterName, cd);
-      if (Object.keys(filterObject.prototype).length) {
+      if (Array.isArray(filterObject)) {
+        cd.scope.$changeDetector = cd;
+        filter = filterObject[0](filterArg, cd.scope, {
+          setValue: prevCallback,
+          changeDetector: cd
+        });
+        cd.scope.$changeDetector = null;
+        if (filter.watchMode) {
+          watchMode = filter.watchMode;
+        }
+        if (filter.onStop) {
+          onStop.push(filter.onStop);
+        }
+        if (filter.onChange) {
+          prevCallback = filter.onChange;
+        }
+      } else if (Object.keys(filterObject.prototype).length) {
+        cd.scope.$changeDetector = cd;
         filter = new filterObject(filterArg, cd.scope, {
           setValue: prevCallback,
           changeDetector: cd
         });
+        cd.scope.$changeDetector = null;
         filter.setValue = prevCallback;
         if (filter.watchMode) {
           watchMode = filter.watchMode;
@@ -1383,7 +1401,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.22';
+alight.version = '0.12.24';
 
 alight.debug = {
   scan: 0,
@@ -4731,8 +4749,10 @@ alight.text['::'] = function(callback, expression, scope, env) {
 
 	var alight = buildAlight();
 	alight.makeInstance = buildAlight;
-	// requrejs/commonjs
-	if(typeof(define) === 'function') {
+
+	if(typeof(alightInitCallback) === 'function') {
+		alightInitCallback(alight)
+	} else if(typeof(define) === 'function') {  // requrejs/commonjs
 		define(function() {
 			return alight;
 		});
