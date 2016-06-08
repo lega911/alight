@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.24
+ * Angular Light 0.12.25
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-05-31, http://angularlight.org/ 
+ * 2016-06-08, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -1401,7 +1401,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.24';
+alight.version = '0.12.25';
 
 alight.debug = {
   scan: 0,
@@ -2495,7 +2495,7 @@ alight.exceptionHandler = function(e, title, locals) {
             index = line.length + 1;
             continue;
           }
-          if ((assignmentOperator[sign] || sign[0] === '=') && sign[1] !== '=') {
+          if (assignmentOperator[sign] || (sign[0] === '=' && sign[1] !== '=')) {
             leftVariable.assignment = true;
           }
           result.push({
@@ -3322,12 +3322,6 @@ fastBinding.prototype.wt = function(expression, element, attr) {
       }
       execute = function(event) {
         var error, error1;
-        if (prevent) {
-          event.preventDefault();
-        }
-        if (stop) {
-          event.stopPropagation();
-        }
         try {
           fn(scope, event, element, getValue());
         } catch (error1) {
@@ -3362,6 +3356,12 @@ fastBinding.prototype.wt = function(expression, element, attr) {
               return;
             }
           }
+        }
+        if (prevent) {
+          event.preventDefault();
+        }
+        if (stop) {
+          event.stopPropagation();
         }
         if (throttle) {
           if (throttleId) {
@@ -4758,8 +4758,6 @@ alight.text['::'] = function(callback, expression, scope, env) {
 		});
 	} else if(typeof(module) === 'object' && typeof(module.exports) === 'object') {
 		module.exports = alight
-	} else if(typeof(alightInitCallback) === 'function') {
-		alightInitCallback(alight)
 	} else {
 		alight.d.al.ctrl.global = true;  // global controllers
 		window.alight = alight;
