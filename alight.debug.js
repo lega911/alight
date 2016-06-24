@@ -1902,6 +1902,15 @@ testDirective = (function() {
       return;
     }
     if (attrSelf.result === 'noDirective') {
+      if (args.attr_type === 'E') {
+        args.list.push({
+          name: attrName,
+          priority: 0,
+          attrName: attrName,
+          noDirective: true
+        });
+        return;
+      }
       addAttr(attrName, args, {
         noDirective: true
       });

@@ -41,10 +41,22 @@
         return parentCD.watch(parentName, fn, watchOption);
     }
     alight.createComponent = function (attrName, constructor) {
-        var name = attrName.replace(/(-\w)/g, function (m) {
+        var parts = attrName.match(/^(\w+)[\-](.+)$/);
+        var ns, name;
+        if (parts) {
+            ns = parts[1];
+            name = parts[2];
+        }
+        else {
+            ns = '$global';
+            name = attrName;
+        }
+        name = name.replace(/(-\w)/g, function (m) {
             return m.substring(1).toUpperCase();
         });
-        alight.d.$global[name] = {
+        if (!alight.d[ns])
+            alight.d[ns] = {};
+        alight.d[ns][name] = {
             restrict: 'E',
             stopBinding: true,
             priority: 5,
@@ -94,10 +106,10 @@
                     var propValue = attr.value;
                     if (!propValue)
                         continue;
-                    var parts = propName.match(/^\:(.*)$/);
-                    if (!parts)
+                    var parts_1 = propName.match(/^\:(.*)$/);
+                    if (!parts_1)
                         continue;
-                    var name_1 = parts[1];
+                    var name_1 = parts_1[1];
                     watchers.push(makeWatch({ scope: scope, name: name_1, parentName: propValue, parentCD: parentCD }));
                 }
                 // template
