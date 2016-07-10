@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.25
+ * Angular Light 0.12.27
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-06-08, http://angularlight.org/ 
+ * 2016-07-10, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -1401,7 +1401,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.25';
+alight.version = '0.12.27';
 
 alight.debug = {
   scan: 0,
@@ -1753,6 +1753,15 @@ testDirective = (function() {
       return;
     }
     if (attrSelf.result === 'noDirective') {
+      if (args.attr_type === 'E') {
+        args.list.push({
+          name: attrName,
+          priority: 0,
+          attrName: attrName,
+          noDirective: true
+        });
+        return;
+      }
       addAttr(attrName, args, {
         noDirective: true
       });
@@ -2388,7 +2397,7 @@ alight.exceptionHandler = function(e, title, locals) {
     inputKeywords = toDict.apply(null, option.input || []);
     uniq = 1;
     pars = function(option) {
-      var a, an, ap, bracket, child, commitText, filters, freeText, index, leftVariable, level, line, original, result, sign, status, stopKey, stringKey, stringValue, variable, variableChildren;
+      var a, an, ap, bracket, child, commitText, digit, filters, freeText, index, leftVariable, level, line, original, result, sign, status, stopKey, stringKey, stringValue, variable, variableChildren;
       line = option.line;
       result = option.result || [];
       index = option.index || 0;
@@ -2398,6 +2407,7 @@ alight.exceptionHandler = function(e, title, locals) {
       leftVariable = null;
       variableChildren = [];
       sign = '';
+      digit = '';
       status = false;
       original = '';
       stringKey = '';
@@ -2504,6 +2514,16 @@ alight.exceptionHandler = function(e, title, locals) {
           });
           status = '';
           sign = '';
+        } else if (status === 'digit') {
+          if (isDigit(a) || a === '.') {
+            digit += a;
+            continue;
+          }
+          result.push({
+            type: 'digit',
+            value: digit
+          });
+          digit = '';
         }
         if (isChar(a)) {
           status = 'key';
@@ -2513,6 +2533,11 @@ alight.exceptionHandler = function(e, title, locals) {
         if (isSign(a)) {
           status = 'sign';
           sign += a;
+          continue;
+        }
+        if (isDigit(a)) {
+          status = 'digit';
+          digit += a;
           continue;
         }
         if (a === '"' || a === "'") {
