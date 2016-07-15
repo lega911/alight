@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.27
+ * Angular Light 0.12.28
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-07-10, http://angularlight.org/ 
+ * 2016-07-15, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -1550,7 +1550,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.27';
+alight.version = '0.12.28';
 
 alight.debug = {
   scan: 0,
@@ -5279,7 +5279,9 @@ alight.d.al.style = function(scope, element, name) {
       };
       lastValue = null;
       cd.$select.change = function() {
-        return setValueOfElement(lastValue);
+        return alight.nextTick(function() {
+          return setValueOfElement(lastValue);
+        });
       };
       setValueOfElement = function(value) {
         var id;
