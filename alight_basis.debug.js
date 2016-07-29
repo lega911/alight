@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.12.28
+ * Angular Light 0.12.29
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-07-15, http://angularlight.org/ 
+ * 2016-07-29, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -1401,7 +1401,7 @@ Scope.prototype.$new = function() {
 
 var attrBinding, bindComment, bindElement, bindNode, bindText, sortByPriority, testDirective;
 
-alight.version = '0.12.28';
+alight.version = '0.12.29';
 
 alight.debug = {
   scan: 0,
@@ -4542,22 +4542,26 @@ alight.d.al.html.modifier.scope = function(self, option) {
   }
   innerName = 'outer';
   return self.insertBlock = function(html) {
-    var ChildScope, parentScope, scope;
+    var ChildScope, parentCD, parentScope, scope, w;
     self.activeElement = self.baseElement.cloneNode(false);
     self.activeElement.innerHTML = html;
     self.insertDom(self.topElement, self.activeElement);
     parentScope = option.scope;
     ChildScope = function() {};
     ChildScope.prototype = parentScope;
+    parentCD = option.env.changeDetector;
     scope = new ChildScope;
     scope.$$root = parentScope.$$root || parentScope;
-    scope.$rootChangeDetector = self.childCD = option.env.changeDetector["new"](scope);
+    scope.$rootChangeDetector = self.childCD = parentCD["new"](scope);
     scope.$changeDetector = null;
     scope.$parent = parentScope;
-    self.childCD.watch('$parent.' + outerName, function(outerValue) {
+    w = parentCD.watch(outerName, function(outerValue) {
       return scope[innerName] = outerValue;
     }, {
       oneTime: oneTime
+    });
+    self.childCD.watch('$destroy', function() {
+      return w.stop();
     });
     alight.bind(self.childCD, self.activeElement, {
       skip_attr: option.env.skippedAttr()
