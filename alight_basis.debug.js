@@ -1,8 +1,8 @@
 /**
- * Angular Light 0.13.0-alpha22
+ * Angular Light 0.13.0
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2016-09-24, http://angularlight.org/ 
+ * 2016-12-04, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
@@ -1371,7 +1371,7 @@ alight.core.scopeWrap = scopeWrap;
 
 var Env, attrBinding, bindComment, bindElement, bindNode, bindText, doubleBinding, sortByPriority, testDirective;
 
-alight.version = '0.13.0-alpha22';
+alight.version = '0.13.0';
 
 alight.debug = {
   scan: 0,
