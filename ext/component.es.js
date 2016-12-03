@@ -1,14 +1,15 @@
 (function () {
     /*
     
-    alight.createComponent('rating', (scope, element, env) => {
+    alight.component('rating', (scope, element, env) => {
       return {
         template,
         templateId,
         templateUrl,
         props,
         onStart,
-        onDestroy
+        onDestroy,
+        api
       };
     })
     
@@ -17,30 +18,37 @@
     */
     var f$ = alight.f$;
     function makeWatch(_a) {
-        var listener = _a.listener, scope = _a.scope, name = _a.name, parentName = _a.parentName, parentCD = _a.parentCD;
+        var listener = _a.listener, childCD = _a.childCD, name = _a.name, parentName = _a.parentName, parentCD = _a.parentCD;
         var fn;
         var watchOption = {};
-        if (listener) {
+        if (listener && listener !== true) {
             if (f$.isFunction(listener)) {
                 fn = listener;
             }
             else {
-                if (listener.watchMode === 'array')
-                    watchOption.isArray = true;
-                if (listener.watchMode === 'deep')
-                    watchOption.deep = true;
                 fn = listener.onChange;
+                if (listener === 'copy' || listener.watchMode === 'copy') {
+                    if (fn)
+                        fn(parentName);
+                    else
+                        childCD.scope[name] = parentName;
+                    return;
+                }
+                if (listener === 'array' || listener.watchMode === 'array')
+                    watchOption.isArray = true;
+                if (listener === 'deep' || listener.watchMode === 'deep')
+                    watchOption.deep = true;
             }
         }
         if (!fn) {
             fn = function (value) {
-                scope[name] = value;
-                scope.$scan();
+                childCD.scope[name] = value;
+                childCD.scan();
             };
         }
-        return parentCD.watch(parentName, fn, watchOption);
+        parentCD.watch(parentName, fn, watchOption);
     }
-    alight.createComponent = function (attrName, constructor) {
+    alight.component = function (attrName, constructor) {
         var parts = attrName.match(/^(\w+)[\-](.+)$/);
         var ns, name;
         if (parts) {
@@ -59,59 +67,95 @@
         alight.d[ns][name] = {
             restrict: 'E',
             stopBinding: true,
-            priority: 5,
-            init: function (parentScope, element, _value, env) {
-                var parentCD = env.changeDetector;
-                var scope = alight.Scope();
-                parentScope.$watch('$destroy', function () { return scope.$destroy(); });
-                scope.$dispatch = function (eventName, value) {
-                    var event = new CustomEvent(eventName);
-                    event.value = value;
-                    element.dispatchEvent(event);
+            priority: alight.priority.$component,
+            init: function (_parentScope, element, _value, parentEnv) {
+                parentEnv.fastBinding = true;
+                var scope = {
+                    $sendEvent: function (eventName, value) {
+                        var event = new CustomEvent(eventName);
+                        event.value = value;
+                        event.component = true;
+                        element.dispatchEvent(event);
+                    }
                 };
-                var option = constructor(scope, element, env);
+                var parentCD = parentEnv.changeDetector.new();
+                var childCD = alight.ChangeDetector(scope);
+                var env = new Env({
+                    element: element,
+                    attributes: parentEnv.attributes,
+                    changeDetector: childCD,
+                    parentChangeDetector: parentCD
+                });
+                try {
+                    var option = constructor(scope, element, env) || {};
+                }
+                catch (e) {
+                    alight.exceptionHandler(e, 'Error in component <' + attrName + '>: ', {
+                        element: element,
+                        scope: scope,
+                        cd: childCD
+                    });
+                    return;
+                }
                 if (option.onStart) {
-                    scope.$watch('$finishBinding', option.onStart);
+                    childCD.watch('$finishBinding', option.onStart);
                 }
                 // bind props
-                var watchers = [];
-                scope.$watch('$destroy', function () {
-                    for (var _i = 0, watchers_1 = watchers; _i < watchers_1.length; _i++) {
-                        var w = watchers_1[_i];
-                        w.stop();
-                    }
+                var parentDestroyed = false;
+                parentCD.watch('$destroy', function () {
+                    parentDestroyed = true;
+                    childCD.destroy();
+                });
+                childCD.watch('$destroy', function () {
                     if (option.onDestroy)
                         option.onDestroy();
+                    if (!parentDestroyed)
+                        parentCD.destroy(); // child of parentCD
                 });
+                // option api
+                if (option.api) {
+                    var propValue = env.takeAttr(':api');
+                    if (propValue)
+                        parentCD.locals[propValue] = option.api;
+                }
+                function watchProp(key, listener) {
+                    var name = ':' + key;
+                    var value = env.takeAttr(name);
+                    if (!value) {
+                        value = env.takeAttr(key);
+                        if (!value)
+                            return;
+                        listener = 'copy';
+                    }
+                    makeWatch({ childCD: childCD, listener: listener, name: key, parentName: value, parentCD: parentCD });
+                }
                 // option props
-                var readyProps = {};
                 if (option.props) {
-                    for (var key in option.props) {
-                        var propName = ':' + key;
-                        var propValue = env.takeAttr(propName);
-                        var listener = option.props[key];
-                        readyProps[propName] = true;
+                    if (Array.isArray(option.props))
+                        for (var _i = 0, _a = option.props; _i < _a.length; _i++) {
+                            var key = _a[_i];
+                            watchProp(key, true);
+                        }
+                    else
+                        for (var key in option.props)
+                            watchProp(key, option.props[key]);
+                }
+                else {
+                    // auto props
+                    for (var _b = 0, _c = element.attributes; _b < _c.length; _b++) {
+                        var attr = _c[_b];
+                        var propName = attr.name;
+                        var propValue = attr.value;
                         if (!propValue)
                             continue;
-                        watchers.push(makeWatch({ scope: scope, listener: listener, name: key, parentName: propValue, parentCD: parentCD }));
+                        var parts_1 = propName.match(/^\:(.*)$/);
+                        if (!parts_1)
+                            continue;
+                        makeWatch({ childCD: childCD, name: parts_1[1], parentName: propValue, parentCD: parentCD });
                     }
                 }
-                // element props
-                for (var _i = 0, _a = element.attributes; _i < _a.length; _i++) {
-                    var attr = _a[_i];
-                    var propName = attr.name;
-                    if (readyProps[propName])
-                        continue;
-                    readyProps[propName] = true;
-                    var propValue = attr.value;
-                    if (!propValue)
-                        continue;
-                    var parts_1 = propName.match(/^\:(.*)$/);
-                    if (!parts_1)
-                        continue;
-                    var name_1 = parts_1[1];
-                    watchers.push(makeWatch({ scope: scope, name: name_1, parentName: propValue, parentCD: parentCD }));
-                }
+                var scanned = false;
+                parentCD.watch('$onScanOnce', function () { return scanned = true; });
                 // template
                 if (option.template)
                     element.innerHTML = option.template;
@@ -138,7 +182,9 @@
                     binding();
                 }
                 function binding(async) {
-                    alight.bind(scope, element, { skip_top: true });
+                    if (!scanned)
+                        parentCD.digest();
+                    alight.bind(childCD, element, { skip: true });
                 }
             }
         };
