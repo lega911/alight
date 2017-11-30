@@ -1,6 +1,6 @@
 {
     "name": "alight",
-    "version": "0.14.0",
+    "version": "0.14.1",
     "description": "Angular Light is a library for building interactive MVVM web interfaces/applications",
     "main": "alight.js",
     "scripts": {

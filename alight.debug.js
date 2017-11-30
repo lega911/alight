@@ -1,15 +1,15 @@
 /**
- * Angular Light 0.14.0
+ * Angular Light 0.14.1
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2017-02-22, http://angularlight.org/ 
+ * 2017-11-30, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
         var alight = function(element, data) {
             return alight.bootstrap(element, data);
         }
-        alight.version = '0.14.0';
+        alight.version = '0.14.1';
         alight.filters = {};
         alight.text = {};
         alight.core = {};
@@ -1815,6 +1815,7 @@ bindComment = function(cd, element, option) {
   env = new Env({
     element: element,
     attrName: d.attrName,
+    attrArgument: d.attrArgument || null,
     attributes: list
   });
   if (alight.debug.directive) {
@@ -4739,6 +4740,7 @@ alight.d.al.html = {
         if (element.nodeType === 8) {
           self.baseElement = null;
           self.topElement = element;
+          env.watch('$destroy', self.removeBlock);
         } else {
           self.baseElement = element;
           self.topElement = document.createComment(" " + env.attrName + ": " + inputName + " ");

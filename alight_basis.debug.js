@@ -1,15 +1,15 @@
 /**
- * Angular Light 0.14.0
+ * Angular Light 1.0.2-alpha
  * (c) 2016 Oleg Nechaev
  * Released under the MIT License.
- * 2017-02-22, http://angularlight.org/ 
+ * 2017-11-30, http://angularlight.org/ 
  */(function() {
     "use strict";
     function buildAlight() {
         var alight = function(element, data) {
             return alight.bootstrap(element, data);
         }
-        alight.version = '0.14.0';
+        alight.version = '1.0.2-alpha';
         alight.filters = {};
         alight.text = {};
         alight.core = {};
@@ -50,6 +50,7 @@
                 model: 25,
                 radio: 25,
                 repeat: 1000,
+                'for': 1000,
                 select: 20,
                 stop: -10,
                 value: 20,
@@ -103,7 +104,7 @@
     };
 
     f$.isPromise = function(p) {
-        return p && window.Promise && p instanceof window.Promise;
+        return p && f$.isFunction(p.then);
     };
 
     f$.isElement = function(el) {
@@ -1806,6 +1807,7 @@ bindComment = function(cd, element, option) {
   env = new Env({
     element: element,
     attrName: d.attrName,
+    attrArgument: d.attrArgument || null,
     attributes: list
   });
   if (alight.debug.directive) {
@@ -2256,34 +2258,6 @@ alight.bind = function(changeDetector, element, option) {
   }
   return result;
 };
-
-!function () {
-    function zoneJSInvoker(_0, zone, _2, task, _4, args) {
-        task.callback.apply(null, args);
-        var root = zone._properties.root;
-        if (root && root.topCD)
-            root.topCD.scan({ zone: true });
-    }
-    var bind = alight.bind;
-    alight.bind = function (cd, el, option) {
-        var root = cd.root;
-        var oz = alight.option.zone;
-        if (oz) {
-            var Z = oz === true ? Zone : oz;
-            var zone = root.zone;
-            if (!zone) {
-                root.zone = zone = Z.current.fork({
-                    name: Z.current.name + '.x',
-                    properties: { root: root },
-                    onInvokeTask: zoneJSInvoker
-                });
-            }
-            if (Z.current !== zone)
-                return root.zone.run(bind, null, [cd, el, option]);
-        }
-        return bind(cd, el, option);
-    };
-}();
 
 alight.bootstrap = function (input, data) {
     if (!input) {
@@ -3834,214 +3808,109 @@ alight.hooks.attribute.unshift({
     }
 });
 
-alight.d.al.value = function(scope, element, variable, env) {
-  var updateModel, watch;
-  env.fastBinding = true;
-  updateModel = function() {
-    env.setValue(variable, element.value);
-    watch.refresh();
-    env.scan();
-  };
-  env.on(element, 'input', updateModel);
-  env.on(element, 'change', updateModel);
-  return watch = env.watch(variable, function(value) {
-    if (value == null) {
-      value = '';
+alight.d.al.if = function (scope, element, name, env) {
+    if (env.elementCanBeRemoved) {
+        alight.exceptionHandler(null, env.attrName + " cant control element because of " + env.elementCanBeRemoved, {
+            scope: scope,
+            element: element,
+            value: name,
+            env: env
+        });
+        return {};
     }
-    element.value = value;
-    return '$scanNoChanges';
-  });
-};
-
-alight.d.al.checked = function (scope, element, name, env) {
-    var fbData = env.fbData = {
-        opt: {},
-        watch: []
-    };
-    function eattr(attrName) {
-        var result = env.takeAttr(attrName);
-        if (alight.option.removeAttribute) {
-            element.removeAttribute(attrName);
-            if (env.fbElement)
-                env.fbElement.removeAttribute(attrName);
-        }
-        return result;
-    }
-    function takeAttr(name, attrName) {
-        var text = eattr(attrName);
-        if (text) {
-            fbData.opt[name] = text;
-            return true;
-        }
-        else {
-            var exp = eattr(':' + attrName) || eattr('al-attr.' + attrName);
-            if (exp) {
-                fbData.watch.push([exp, name]);
-                return true;
-            }
-        }
-    }
-    function applyOpt(opt, env, updateDOM) {
-        for (var k in env.fbData.opt) {
-            opt[k] = env.fbData.opt[k];
-        }
-        var _loop_1 = function(w) {
-            var name_1 = w[1];
-            env.watch(w[0], function (value) {
-                opt[name_1] = value;
-                updateDOM();
-            });
-        };
-        for (var _i = 0, _a = env.fbData.watch; _i < _a.length; _i++) {
-            var w = _a[_i];
-            _loop_1(w);
-        }
-    }
-    if (takeAttr('value', 'value')) {
-        env.fastBinding = function (scope, element, name, env) {
-            var watch, array = null;
-            function updateDOM() {
-                element.checked = array && array.indexOf(opt.value) >= 0;
-                return '$scanNoChanges';
-            }
-            ;
-            var opt = {};
-            applyOpt(opt, env, updateDOM);
-            watch = env.watch(name, function (input) {
-                array = input;
-                if (!Array.isArray(array))
-                    array = null;
-                updateDOM();
-            }, { isArray: true });
-            env.on(element, 'change', function () {
-                if (!array) {
-                    array = [];
-                    env.setValue(name, array);
+    env.stopBinding = true;
+    var self = {
+        item: null,
+        childCD: null,
+        base_element: null,
+        top_element: null,
+        start: function () {
+            self._name = name;
+            self.controller = env.changeDetector.ifController;
+            self.initControl();
+            self.prepare();
+            self.watchModel();
+        },
+        initControl: function () {
+            self.index = 0;
+            self.controller = env.changeDetector.ifController = {
+                index: 1,
+                active: null,
+                whoActive: [],
+                last: null,
+                update: function () {
+                    var active;
+                    for (var _i = 0, _a = self.controller.whoActive; _i < _a.length; _i++) {
+                        var i = _a[_i];
+                        if (!i)
+                            continue;
+                        active = i;
+                        break;
+                    }
+                    if (!active)
+                        active = self.controller.last;
+                    if (self.controller.active !== active) {
+                        if (self.controller.active)
+                            self.controller.active.removeBlock();
+                        self.controller.active = active;
+                        if (active)
+                            active.insertBlock();
+                    }
                 }
-                if (element.checked) {
-                    if (array.indexOf(opt.value) < 0)
-                        array.push(opt.value);
-                }
-                else {
-                    var i = array.indexOf(opt.value);
-                    if (i >= 0)
-                        array.splice(i, 1);
-                }
-                watch.refresh();
-                env.scan();
-                return;
-            });
-        };
-    }
-    else {
-        takeAttr('true', 'true-value');
-        takeAttr('false', 'false-value');
-        env.fastBinding = function (scope, element, name, env) {
-            var value, watch;
-            var opt = {
-                true: true,
-                false: false
             };
-            function updateDOM() {
-                element.checked = value === opt.true;
-                return '$scanNoChanges';
-            }
-            ;
-            applyOpt(opt, env, updateDOM);
-            watch = env.watch(name, function (input) {
-                value = input;
-                updateDOM();
-            });
-            env.on(element, 'change', function () {
-                value = element.checked ? opt.true : opt.false;
-                env.setValue(name, value);
-                watch.refresh();
-                env.scan();
+        },
+        prepare: function () {
+            self.base_element = element;
+            self.top_element = document.createComment(" " + env.attrName + ": " + name + " ");
+            f$.before(element, self.top_element);
+            f$.remove(element);
+        },
+        updateDom: function (value) {
+            if (value)
+                self.controller.whoActive[self.index] = self;
+            else
+                self.controller.whoActive[self.index] = null;
+            self.controller.update();
+        },
+        removeBlock: function () {
+            if (!self.childCD)
                 return;
+            self.childCD.destroy();
+            self.childCD = null;
+            self.removeDom(self.item);
+            self.item = null;
+        },
+        insertBlock: function () {
+            if (self.childCD)
+                return;
+            self.item = self.base_element.cloneNode(true);
+            self.insertDom(self.top_element, self.item);
+            self.childCD = env.new();
+            alight.bind(self.childCD, self.item, {
+                skip_attr: env.skippedAttr(),
+                elementCanBeRemoved: env.attrName
             });
-        };
-    }
-    env.fastBinding(scope, element, name, env);
+        },
+        watchModel: function () { return env.watch(name, self.updateDom, { readOnly: true }); },
+        removeDom: function (element) { return f$.remove(element); },
+        insertDom: function (base, element) { return f$.after(base, element); }
+    };
+    return self;
 };
-
-alight.d.al["if"] = function(scope, element, name, env) {
-  var self;
-  if (env.elementCanBeRemoved) {
-    alight.exceptionHandler(null, env.attrName + " can't control element because of " + env.elementCanBeRemoved, {
-      scope: scope,
-      element: element,
-      value: name,
-      env: env
-    });
-    return {};
-  }
-  env.stopBinding = true;
-  return self = {
-    item: null,
-    childCD: null,
-    base_element: null,
-    top_element: null,
-    start: function() {
-      self.prepare();
-      self.watchModel();
-    },
-    prepare: function() {
-      self.base_element = element;
-      self.top_element = document.createComment(" " + env.attrName + ": " + name + " ");
-      f$.before(element, self.top_element);
-      f$.remove(element);
-    },
-    updateDom: function(value) {
-      if (value) {
-        self.insertBlock(value);
-      } else {
-        self.removeBlock();
-      }
-    },
-    removeBlock: function() {
-      if (!self.childCD) {
-        return;
-      }
-      self.childCD.destroy();
-      self.childCD = null;
-      self.removeDom(self.item);
-      self.item = null;
-    },
-    insertBlock: function() {
-      if (self.childCD) {
-        return;
-      }
-      self.item = self.base_element.cloneNode(true);
-      self.insertDom(self.top_element, self.item);
-      self.childCD = env.changeDetector["new"]();
-      alight.bind(self.childCD, self.item, {
-        skip_attr: env.skippedAttr(),
-        elementCanBeRemoved: env.attrName
-      });
-    },
-    watchModel: function() {
-      env.watch(name, self.updateDom);
-    },
-    removeDom: function(element) {
-      f$.remove(element);
-    },
-    insertDom: function(base, element) {
-      f$.after(base, element);
-    }
-  };
+alight.d.al.elseIf = function (scope, element, name, env) {
+    var self = alight.d.al.if(scope, element, name, env);
+    self.initControl = function () {
+        self.index = self.controller.index++;
+    };
+    return self;
 };
-
-alight.d.al.ifnot = function(scope, element, name, env) {
-  var self;
-  self = alight.d.al["if"](scope, element, name, env);
-  self.updateDom = function(value) {
-    if (value) {
-      self.removeBlock();
-    } else {
-      self.insertBlock();
-    }
-  };
-  return self;
+alight.d.al.else = function (scope, element, name, env) {
+    var self = alight.d.al.if(scope, element, name, env);
+    self.initControl = function () {
+        self.controller.last = self;
+    };
+    self.watchModel = function () { };
+    return self;
 };
 
 
@@ -4058,7 +3927,7 @@ alight.d.al.ifnot = function(scope, element, name, env) {
     "(key, value) in object orderBy:key:reverse"
     "(key, value) in object | filter orderBy:key,reverse"
  */
-alight.directives.al.repeat = {
+alight.d.al.repeat = alight.d.al["for"] = {
   restrict: 'AM',
   init: function(parentScope, element, exp, env) {
     var CD, self;
@@ -4730,6 +4599,7 @@ alight.d.al.html = {
         if (element.nodeType === 8) {
           self.baseElement = null;
           self.topElement = element;
+          env.watch('$destroy', self.removeBlock);
         } else {
           self.baseElement = element;
           self.topElement = document.createComment(" " + env.attrName + ": " + inputName + " ");
@@ -4933,6 +4803,9 @@ alight.d.al.html.modifier.inline = function(self, option) {
     if (!env.attrArgument) {
       return;
     }
+    if (element.nodeName.toLowerCase() === 'option' && env.attrArgument === 'value') {
+      return alight.d.al.model.selectHandler(scope, element, key, env);
+    }
     d = env.attrArgument.split('.');
     attrName = d[0];
     prop = props[attrName];
@@ -5020,6 +4893,258 @@ alight.d.al.html.modifier.inline = function(self, option) {
     env.fastBinding = fn;
   };
 })();
+
+{
+    var textHandler = makeHandler(function (element) { return element.value; }, function (element, value) {
+        if (value == null)
+            value = '';
+        element.value = value;
+    });
+    var numberHandler = makeHandler(function (element) { return element.valueAsNumber; }, function (element, value) {
+        element.valueAsNumber = value;
+    });
+    var dateHandler = makeHandler(function (element) { return element.valueAsDate; }, function (element, value) {
+        element.valueAsDate = value;
+    });
+    var types_1 = {
+        'text': textHandler,
+        'range': numberHandler,
+        'number': numberHandler,
+        'checkbox': checkboxHandler,
+        'radio': radioHandler,
+        'date': dateHandler,
+        'time': numberHandler,
+        //'datetime': dateHandler,
+        'datetime-local': numberHandler
+    };
+    alight.d.al.model = function (scope, element, value, env) {
+        var elName = element.nodeName.toLowerCase();
+        if (elName === 'input') {
+            var handler = types_1[element.type] || types_1.text;
+            handler(scope, element, value, env);
+        }
+        else if (elName === 'select') {
+            selectHandler(scope, element, value, env);
+        }
+        else {
+            componentHandler(scope, element, value, env);
+        }
+    };
+    function makeHandler(getter, watchFn) {
+        return function (scope, element, variable, env) {
+            env.fastBinding = true;
+            var watch;
+            var updateModel = function () {
+                env.setValue(variable, getter(element));
+                watch.refresh();
+                env.scan();
+            };
+            env.on(element, 'input', updateModel);
+            env.on(element, 'change', updateModel);
+            watch = env.watch(variable, function (value) { return watchFn(element, value); }, { readOnly: true });
+        };
+    }
+    ;
+    function radioHandler(scope, element, name, env) {
+        var value, watch;
+        var key = env.takeAttr('al-value');
+        if (key)
+            value = env.eval(key);
+        else
+            value = env.takeAttr('value');
+        env.on(element, 'change', function (e) {
+            env.setValue(name, value);
+            watch.refresh();
+            env.scan();
+        });
+        watch = env.watch(name, function (newValue) {
+            element.checked = value === newValue;
+        }, { readOnly: true });
+    }
+    ;
+    function checkboxHandler(scope, element, name, env) {
+        var fbData = env.fbData = {
+            opt: {},
+            watch: []
+        };
+        function eattr(attrName) {
+            var result = env.takeAttr(attrName);
+            if (alight.option.removeAttribute) {
+                element.removeAttribute(attrName);
+                if (env.fbElement)
+                    env.fbElement.removeAttribute(attrName);
+            }
+            return result;
+        }
+        function takeAttr(name, attrName) {
+            var text = eattr(attrName);
+            if (text) {
+                fbData.opt[name] = text;
+                return true;
+            }
+            else {
+                var exp = eattr(':' + attrName) || eattr('al-attr.' + attrName);
+                if (exp) {
+                    fbData.watch.push([exp, name]);
+                    return true;
+                }
+            }
+        }
+        function applyOpt(opt, env, updateDOM) {
+            for (var k in env.fbData.opt) {
+                opt[k] = env.fbData.opt[k];
+            }
+            var _loop_1 = function(w) {
+                var name_1 = w[1];
+                env.watch(w[0], function (value) {
+                    opt[name_1] = value;
+                    updateDOM();
+                });
+            };
+            for (var _i = 0, _a = env.fbData.watch; _i < _a.length; _i++) {
+                var w = _a[_i];
+                _loop_1(w);
+            }
+        }
+        if (takeAttr('value', 'value')) {
+            env.fastBinding = function (scope, element, name, env) {
+                var watch, array = null;
+                function updateDOM() {
+                    element.checked = array && array.indexOf(opt.value) >= 0;
+                    return '$scanNoChanges';
+                }
+                ;
+                var opt = {};
+                applyOpt(opt, env, updateDOM);
+                watch = env.watch(name, function (input) {
+                    array = input;
+                    if (!Array.isArray(array))
+                        array = null;
+                    updateDOM();
+                }, { isArray: true });
+                env.on(element, 'change', function () {
+                    if (!array) {
+                        array = [];
+                        env.setValue(name, array);
+                    }
+                    if (element.checked) {
+                        if (array.indexOf(opt.value) < 0)
+                            array.push(opt.value);
+                    }
+                    else {
+                        var i = array.indexOf(opt.value);
+                        if (i >= 0)
+                            array.splice(i, 1);
+                    }
+                    watch.refresh();
+                    env.scan();
+                });
+            };
+        }
+        else {
+            takeAttr('true', 'true-value');
+            takeAttr('false', 'false-value');
+            env.fastBinding = function (scope, element, name, env) {
+                var value, watch;
+                var opt = {
+                    true: true,
+                    false: false
+                };
+                function updateDOM() {
+                    element.checked = value === opt.true;
+                    return '$scanNoChanges';
+                }
+                ;
+                applyOpt(opt, env, updateDOM);
+                watch = env.watch(name, function (input) {
+                    value = input;
+                    updateDOM();
+                });
+                env.on(element, 'change', function () {
+                    value = element.checked ? opt.true : opt.false;
+                    env.setValue(name, value);
+                    watch.refresh();
+                    env.scan();
+                });
+            };
+        }
+        env.fastBinding(scope, element, name, env);
+    }
+    ;
+    function selectHandler(scope, element, name, env) {
+        var cd = env.new();
+        var value = null;
+        var values = {};
+        var index = 0;
+        cd.$select = {
+            add: function (value) {
+                index++;
+                values[index] = value;
+                updateValue();
+                return index;
+            },
+            remove: function (index) {
+                delete values[index];
+                updateValue();
+            }
+        };
+        env.on(element, 'change', function () {
+            value = event.target.value;
+            if (index)
+                value = values[value];
+            env.setValue(name, value);
+            watch.refresh();
+            env.scan();
+        });
+        function updateValue() {
+            for (var i in values) {
+                if (values[i] === value) {
+                    element.value = i;
+                    return;
+                }
+            }
+            element.selectedIndex = -1;
+        }
+        ;
+        var watch = env.watch(name, function (newValue) {
+            value = newValue;
+            if (index)
+                updateValue();
+            else
+                element.value = value;
+        });
+        env.bind(cd);
+    }
+    ;
+    alight.d.al.model.selectHandler = function (scope, element, name, env) {
+        var lvl = 4;
+        var $select = null;
+        var p = env.changeDetector;
+        while (lvl-- > 0) {
+            if (p.$select) {
+                $select = p.$select;
+                break;
+            }
+            p = p.parent;
+        }
+        if (!$select)
+            throw 'Select model not found';
+        var value = env.getValue(name);
+        var index = $select.add(value);
+        element.value = index;
+        env.watch('$destroy', function () {
+            $select.remove(index);
+        });
+    };
+    function componentHandler(scope, element, name, env) {
+        env.on(element, 'input', function (e) {
+            if (!e.component)
+                return;
+            env.setValue(name, e.value);
+            env.scan();
+        });
+    }
+}
 
 alight.filters.json = {
   watchMode: 'deep',
@@ -5199,6 +5324,144 @@ alight.text['::'] = function(callback, expression, scope, env) {
         parentCD.watch(parentName, fn, watchOption);
     }
     ;
+    function bindComponent(_a) {
+        var attrName = _a.attrName, constructor = _a.constructor, _parentScope = _a._parentScope, element = _a.element, _value = _a._value, parentEnv = _a.parentEnv;
+        var scope = {};
+        var parentCD = parentEnv.changeDetector.new();
+        var childCD = alight.ChangeDetector(scope);
+        var env = new Env({
+            element: element,
+            attributes: parentEnv.attributes,
+            changeDetector: childCD,
+            parentChangeDetector: parentCD,
+            sendEvent: function (eventName, value) {
+                var event = new CustomEvent(eventName);
+                event.value = value;
+                event.component = true;
+                element.dispatchEvent(event);
+            }
+        });
+        try {
+            var option = constructor.call(env, scope, element, env) || {};
+        }
+        catch (e) {
+            alight.exceptionHandler(e, 'Error in component <' + attrName + '>: ', {
+                element: element,
+                scope: scope,
+                cd: childCD
+            });
+            return;
+        }
+        if (option.onStart) {
+            childCD.watch('$finishBinding', function () {
+                option.onStart();
+                childCD.scan();
+            });
+        }
+        // bind props
+        var parentDestroyed = false;
+        parentCD.watch('$destroy', function () {
+            parentDestroyed = true;
+            childCD.destroy();
+        });
+        childCD.watch('$destroy', function () {
+            if (option.onDestroy)
+                option.onDestroy();
+            if (!parentDestroyed)
+                parentCD.destroy(); // child of parentCD
+        });
+        // api
+        for (var _i = 0, _b = element.attributes; _i < _b.length; _i++) {
+            var attr = _b[_i];
+            if (attr.name[0] !== '#')
+                continue;
+            var name_1 = attr.name.slice(1);
+            if (!name_1)
+                continue;
+            if (option.api)
+                parentCD.setValue(name_1, option.api);
+            else
+                parentCD.setValue(name_1, scope);
+            break;
+        }
+        var modelAttr = element.attributes['al-model'];
+        function watchProp(key, listener) {
+            if (key === '$model') {
+                makeWatch({ childCD: childCD, parentCD: parentCD, listener: listener, name: '$model', parentName: modelAttr.value });
+                modelAttr = null;
+            }
+            else {
+                var name_2 = ':' + key;
+                var value = env.takeAttr(name_2);
+                if (!value) {
+                    value = env.takeAttr(key);
+                    if (!value)
+                        return;
+                    listener = 'copy';
+                }
+                makeWatch({ childCD: childCD, listener: listener, name: key, parentName: value, parentCD: parentCD });
+            }
+        }
+        // option props
+        if (option.props) {
+            if (Array.isArray(option.props))
+                for (var _c = 0, _d = option.props; _c < _d.length; _c++) {
+                    var key = _d[_c];
+                    watchProp(key, true);
+                }
+            else
+                for (var key in option.props)
+                    watchProp(key, option.props[key]);
+        }
+        else {
+            // auto props
+            for (var _e = 0, _f = element.attributes; _e < _f.length; _e++) {
+                var attr = _f[_e];
+                var propName = attr.name;
+                var propValue = attr.value;
+                if (!propValue)
+                    continue;
+                var parts = propName.match(/^\:(.*)$/);
+                if (!parts)
+                    continue;
+                makeWatch({ childCD: childCD, name: parts[1], parentName: propValue, parentCD: parentCD });
+            }
+        }
+        if (modelAttr)
+            watchProp('$model');
+        var scanned = false;
+        parentCD.watch('$onScanOnce', function () { return scanned = true; });
+        // template
+        if (option.template)
+            element.innerHTML = option.template;
+        if (option.templateId) {
+            var templateElement = document.getElementById(option.templateId);
+            if (!templateElement)
+                throw 'No template ' + option.templateId;
+            element.innerHTML = templateElement.innerHTML;
+        }
+        if (option.templateUrl) {
+            f$.ajax({
+                url: option.templateUrl,
+                cache: true,
+                success: function (template) {
+                    element.innerHTML = template;
+                    binding(true);
+                },
+                error: function () {
+                    console.error('Template is not loaded', option.templateUrl);
+                }
+            });
+        }
+        else {
+            binding();
+        }
+        function binding(async) {
+            if (!scanned)
+                parentCD.digest();
+            alight.bind(childCD, element, { skip: true });
+        }
+    }
     alight.component = function (attrName, constructor) {
         var parts = attrName.match(/^(\w+)[\-](.+)$/);
         var ns, name;
@@ -5218,133 +5481,7 @@ alight.text['::'] = function(callback, expression, scope, env) {
             stopBinding: true,
             priority: alight.priority.$component,
             init: function (_parentScope, element, _value, parentEnv) {
-                var scope = {
-                    $sendEvent: function (eventName, value) {
-                        var event = new CustomEvent(eventName);
-                        event.value = value;
-                        event.component = true;
-                        element.dispatchEvent(event);
-                    }
-                };
-                var parentCD = parentEnv.changeDetector.new();
-                var childCD = alight.ChangeDetector(scope);
-                var env = new Env({
-                    element: element,
-                    attributes: parentEnv.attributes,
-                    changeDetector: childCD,
-                    parentChangeDetector: parentCD
-                });
-                try {
-                    var option = constructor.call(childCD, scope, element, env) || {};
-                }
-                catch (e) {
-                    alight.exceptionHandler(e, 'Error in component <' + attrName + '>: ', {
-                        element: element,
-                        scope: scope,
-                        cd: childCD
-                    });
-                    return;
-                }
-                if (option.onStart) {
-                    childCD.watch('$finishBinding', function () {
-                        option.onStart();
-                        childCD.scan();
-                    });
-                }
-                // bind props
-                var parentDestroyed = false;
-                parentCD.watch('$destroy', function () {
-                    parentDestroyed = true;
-                    childCD.destroy();
-                });
-                childCD.watch('$destroy', function () {
-                    if (option.onDestroy)
-                        option.onDestroy();
-                    if (!parentDestroyed)
-                        parentCD.destroy(); // child of parentCD
-                });
-                // api
-                for (var _i = 0, _a = element.attributes; _i < _a.length; _i++) {
-                    var attr = _a[_i];
-                    if (attr.name[0] !== '#')
-                        continue;
-                    var name_1 = attr.name.slice(1);
-                    if (!name_1)
-                        continue;
-                    if (option.api)
-                        parentCD.setValue(name_1, option.api);
-                    else
-                        parentCD.setValue(name_1, scope);
-                    break;
-                }
-                function watchProp(key, listener) {
-                    var name = ':' + key;
-                    var value = env.takeAttr(name);
-                    if (!value) {
-                        value = env.takeAttr(key);
-                        if (!value)
-                            return;
-                        listener = 'copy';
-                    }
-                    makeWatch({ childCD: childCD, listener: listener, name: key, parentName: value, parentCD: parentCD });
-                }
-                // option props
-                if (option.props) {
-                    if (Array.isArray(option.props))
-                        for (var _b = 0, _c = option.props; _b < _c.length; _b++) {
-                            var key = _c[_b];
-                            watchProp(key, true);
-                        }
-                    else
-                        for (var key in option.props)
-                            watchProp(key, option.props[key]);
-                }
-                else {
-                    // auto props
-                    for (var _d = 0, _e = element.attributes; _d < _e.length; _d++) {
-                        var attr = _e[_d];
-                        var propName = attr.name;
-                        var propValue = attr.value;
-                        if (!propValue)
-                            continue;
-                        var parts_1 = propName.match(/^\:(.*)$/);
-                        if (!parts_1)
-                            continue;
-                        makeWatch({ childCD: childCD, name: parts_1[1], parentName: propValue, parentCD: parentCD });
-                    }
-                }
-                var scanned = false;
-                parentCD.watch('$onScanOnce', function () { return scanned = true; });
-                // template
-                if (option.template)
-                    element.innerHTML = option.template;
-                if (option.templateId) {
-                    var templateElement = document.getElementById(option.templateId);
-                    if (!templateElement)
-                        throw 'No template ' + option.templateId;
-                    element.innerHTML = templateElement.innerHTML;
-                }
-                if (option.templateUrl) {
-                    f$.ajax({
-                        url: option.templateUrl,
-                        cache: true,
-                        success: function (template) {
-                            element.innerHTML = template;
-                            binding(true);
-                        },
-                        error: function () {
-                            console.error('Template is not loaded', option.templateUrl);
-                        }
-                    });
-                }
-                else {
-                    binding();
-                }
-                function binding(async) {
-                    if (!scanned)
-                        parentCD.digest();
-                    alight.bind(childCD, element, { skip: true });
-                }
+                bindComponent({ attrName: attrName, constructor: constructor, _parentScope: _parentScope, element: element, _value: _value, parentEnv: parentEnv });
             }
         };
     };
